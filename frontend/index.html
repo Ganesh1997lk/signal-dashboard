@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Signal Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <h1>MT5 Trading Signal Dashboard</h1>
+    <div class="container">
+        <div class="instrument-panel">
+            <h2>GOLD (XAU/USD)</h2>
+            <div class="signal-box">
+                <span id="gold-signal" class="signal">WAITING</span>
+                <span id="gold-price" class="price">0.00</span>
+            </div>
+            <div class="chart-container">
+                <canvas id="gold-chart"></canvas>
+            </div>
+            <div class="chart-container-rsi">
+                <canvas id="gold-rsi-chart"></canvas>
+            </div>
+            <div class="history-panel">
+                <h3>Signal History</h3>
+                <div id="gold-history" class="history-log"></div>
+            </div>
+        </div>
+        <div class="instrument-panel">
+            <h2>BITCOIN (BTC/USD)</h2>
+            <div class="signal-box">
+                <span id="btcusd-signal" class="signal">WAITING</span>
+                <span id="btcusd-price" class="price">0.00</span>
+            </div>
+            <div class="chart-container">
+                <canvas id="btcusd-chart"></canvas>
+            </div>
+            <div class="chart-container-rsi">
+                <canvas id="btcusd-rsi-chart"></canvas>
+            </div>
+            <div class="history-panel">
+                <h3>Signal History</h3>
+                <div id="btcusd-history" class="history-log"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
