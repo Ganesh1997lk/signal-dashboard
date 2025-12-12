@@ -18,38 +18,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Chart Creation ---
     function createChart(symbol) {
         const chartCtx = document.getElementById(`${symbol}-chart`).getContext('2d');
-        const rsiCtx = document.getElementById(`${symbol}-rsi-chart`).getContext('2d');
+        const rsiContainer = document.getElementById(`${symbol}-rsi-chart`).parentElement;
+        rsiContainer.style.display = 'none'; // Hide RSI chart container
 
         charts[symbol] = {
             priceChart: new Chart(chartCtx, {
                 type: 'candlestick',
                 data: { datasets: [
                     { label: 'Price', data: [] },
-                    { label: 'EMA Fast', type: 'line', data: [], borderColor: '#bb86fc', borderWidth: 1.5, pointRadius: 0 },
-                    { label: 'EMA Slow', type: 'line', data: [], borderColor: '#03dac6', borderWidth: 1.5, pointRadius: 0 }
+                    { label: 'ITrend', type: 'line', data: [], borderColor: '#bb86fc', borderWidth: 1.5, pointRadius: 0 },
+                    { label: 'SmoothPrice', type: 'line', data: [], borderColor: '#03dac6', borderWidth: 1.5, pointRadius: 0 }
                 ]},
                 options: {
                     scales: { x: { type: 'time', time: { unit: 'minute' } } },
                     plugins: { legend: { display: false } }
-                }
-            }),
-            rsiChart: new Chart(rsiCtx, {
-                type: 'line',
-                data: { datasets: [{ label: 'RSI', data: [], borderColor: '#fbc02d', borderWidth: 1.5 }] },
-                options: {
-                    scales: {
-                        x: { type: 'time', time: { unit: 'minute' }, display: false },
-                        y: { min: 0, max: 100 }
-                    },
-                    plugins: {
-                        legend: { display: false },
-                        annotation: {
-                            annotations: {
-                                line1: { type: 'line', yMin: 70, yMax: 70, borderColor: 'rgba(255, 99, 132, 0.5)', borderWidth: 1 },
-                                line2: { type: 'line', yMin: 30, yMax: 30, borderColor: 'rgba(75, 192, 192, 0.5)', borderWidth: 1 }
-                            }
-                        }
-                    }
                 }
             })
         };
@@ -90,20 +72,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Update charts
         const priceChart = charts[symbol].priceChart;
-        const rsiChart = charts[symbol].rsiChart;
 
         const chartLabels = data.chart_data.map(d => new Date(d.time));
 
         priceChart.data.labels = chartLabels;
         priceChart.data.datasets[0].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), o: d.open, h: d.high, l: d.low, c: d.close }));
-        priceChart.data.datasets[1].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.EMA_9 }));
-        priceChart.data.datasets[2].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.EMA_21 }));
-
-        rsiChart.data.labels = chartLabels;
-        rsiChart.data.datasets[0].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.RSI_14 }));
+        priceChart.data.datasets[1].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.ITrend }));
+        priceChart.data.datasets[2].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.SmoothPrice }));
 
         priceChart.update('none');
-        rsiChart.update('none');
 
         // Update history panel
         updateHistory(symbol, data.history);
