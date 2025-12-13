@@ -3,7 +3,7 @@ import random
 import time
 from flask import Flask, jsonify, send_from_directory
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np
 
 # --- Configuration ---
@@ -13,9 +13,10 @@ USE_SIMULATOR = True
 app = Flask(__name__, static_folder='../frontend')
 
 # --- Global State ---
-signal_states = {
-    'GOLD': {'state': 'WAITING', 'history': []},
-    'BTCUSD': {'state': 'WAITING', 'history': []}
+# Each trade will be a dictionary: {'type': 'BUY'/'SELL', 'open_price': float, 'open_time': str, 'status': 'OPEN'/'CLOSED', 'sl': float, 'tp': float}
+trade_history = {
+    'GOLD': [],
+    'BTCUSD': []
 }
 simulator_trend = {'direction': 'up', 'change_time': time.time()}
 
@@ -62,45 +63,123 @@ def create_simulated_data(symbol):
 
 # --- Signal Generation ---
 def generate_signal(df, symbol):
-    state_info = signal_states[symbol]
-    current_state = state_info['state']
 
+    # --- Indicators ---
+    # Sinhala: දර්ශක ගණනය කිරීම
     df['EMA_9'] = calculate_ema(df['close'], 9)
     df['EMA_21'] = calculate_ema(df['close'], 21)
     df['RSI_14'] = calculate_rsi(df['close'], 14)
 
+    # --- EA Configuration ---
+    STOP_LOSS_PIPS = 10
+    TAKE_PROFIT_PIPS = 20
+    BREAKEVEN_PIPS = 5 # Profit pips needed to trigger breakeven
+    TRAILING_STOP_PIPS = 10 # Pips to trail behind the price
+    MAX_OPEN_TRADES = 5 # Maximum number of open trades at a time
+    PIP_VALUE = 0.01 if symbol != 'GOLD' else 1 # Adjust pip value for GOLD
+
     # Drop NA values that may be created by indicators
     df.dropna(inplace=True)
     if df.empty:
-        return current_state, df # Not enough data
+        return 'ERROR', df # Not enough data
 
     latest = df.iloc[-1]
     price = latest['close']
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    symbol_trades = trade_history[symbol]
+
+    # --- Manage Open Trades ---
+    # Sinhala: දැනට පවතින ගනුදෙනු කළමනාකරණය කිරීම
+    open_trades = [t for t in symbol_trades if t['status'] == 'OPEN']
+    for trade in open_trades:
+        # Breakeven Logic
+        if trade.get('breakeven_triggered', False) == False:
+            if trade['type'] == 'BUY' and price >= trade['open_price'] + BREAKEVEN_PIPS * PIP_VALUE:
+                trade['sl'] = trade['open_price']
+                trade['breakeven_triggered'] = True
+            elif trade['type'] == 'SELL' and price <= trade['open_price'] - BREAKEVEN_PIPS * PIP_VALUE:
+                trade['sl'] = trade['open_price']
+                trade['breakeven_triggered'] = True
+
+        # Trailing Stop Logic (only triggers after breakeven)
+        if trade.get('breakeven_triggered', False) == True:
+            if trade['type'] == 'BUY':
+                new_sl = price - TRAILING_STOP_PIPS * PIP_VALUE
+                if new_sl > trade['sl']:
+                    trade['sl'] = new_sl
+            elif trade['type'] == 'SELL':
+                new_sl = price + TRAILING_STOP_PIPS * PIP_VALUE
+                if new_sl < trade['sl']:
+                    trade['sl'] = new_sl
+
+        # SL/TP Hit Logic
+        if trade['type'] == 'BUY':
+            if price <= trade['sl']:
+                trade.update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp, 'reason': 'SL'})
+            elif price >= trade['tp']:
+                trade.update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp, 'reason': 'TP'})
+        elif trade['type'] == 'SELL':
+            if price >= trade['sl']:
+                trade.update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp, 'reason': 'SL'})
+            elif price <= trade['tp']:
+                trade.update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp, 'reason': 'TP'})
+
+
+    # --- Check for New Signals ---
+    # Sinhala: නව සංඥා සඳහා පරීක්ෂා කිරීම
     is_buy_condition = latest['EMA_9'] > latest['EMA_21'] and latest['RSI_14'] > 52 and latest['RSI_14'] < 70
     is_sell_condition = latest['EMA_9'] < latest['EMA_21'] and latest['RSI_14'] < 48 and latest['RSI_14'] > 30
 
-    new_signal = current_state
-    timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+    open_buy_trades = any(t['type'] == 'BUY' and t['status'] == 'OPEN' for t in symbol_trades)
+    open_sell_trades = any(t['type'] == 'SELL' and t['status'] == 'OPEN' for t in symbol_trades)
 
-    if current_state == 'WAITING':
-        if is_buy_condition:
-            new_signal = 'BUY_HOLD'
-            state_info['history'].append({'type': 'BUY', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN'})
-        elif is_sell_condition:
-            new_signal = 'SELL_HOLD'
-            state_info['history'].append({'type': 'SELL', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN'})
-    elif current_state == 'BUY_HOLD' and not is_buy_condition:
-        new_signal = 'WAITING'
-        if state_info['history'] and state_info['history'][-1]['status'] == 'OPEN':
-            state_info['history'][-1].update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp})
-    elif current_state == 'SELL_HOLD' and not is_sell_condition:
-        new_signal = 'WAITING'
-        if state_info['history'] and state_info['history'][-1]['status'] == 'OPEN':
-            state_info['history'][-1].update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp})
+    # --- Opposing Signal Logic ---
+    # Sinhala: ප්‍රතිවිරුද්ධ සංඥා සඳහා ගනුදෙනු වැසීම
+    if is_buy_condition and open_sell_trades:
+        for t in symbol_trades:
+            if t['type'] == 'SELL' and t['status'] == 'OPEN':
+                # Close at a simulated profit as per user instruction "සියල්ලට tp කර close කරන්න"
+                t.update({'status': 'CLOSED', 'close_price': t['tp'], 'close_time': timestamp, 'reason': 'OPPOSING_SIGNAL'})
+    elif is_sell_condition and open_buy_trades:
+        for t in symbol_trades:
+            if t['type'] == 'BUY' and t['status'] == 'OPEN':
+                t.update({'status': 'CLOSED', 'close_price': t['tp'], 'close_time': timestamp, 'reason': 'OPPOSING_SIGNAL'})
 
-    state_info['state'] = new_signal
-    if len(state_info['history']) > 10:
-        state_info['history'].pop(0)
+    # --- Open New Trades ---
+    # Re-check open trades after potential closures
+    open_trades_count = len([t for t in symbol_trades if t['status'] == 'OPEN'])
+    open_buy_trades = any(t['type'] == 'BUY' and t['status'] == 'OPEN' for t in symbol_trades)
+    open_sell_trades = any(t['type'] == 'SELL' and t['status'] == 'OPEN' for t in symbol_trades)
+
+    if is_buy_condition and open_trades_count < MAX_OPEN_TRADES:
+        # Sinhala: නව BUY ගනුදෙනුවක් විවෘත කිරීම
+        sl = price - STOP_LOSS_PIPS * PIP_VALUE
+        tp = price + TAKE_PROFIT_PIPS * PIP_VALUE
+        symbol_trades.append({
+            'type': 'BUY', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN', 'sl': sl, 'tp': tp
+        })
+    elif is_sell_condition and open_trades_count < MAX_OPEN_TRADES:
+        # Sinhala: නව SELL ගනුදෙනුවක් විවෘත කිරීම
+        sl = price + STOP_LOSS_PIPS * PIP_VALUE
+        tp = price - TAKE_PROFIT_PIPS * PIP_VALUE
+        symbol_trades.append({
+            'type': 'SELL', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN', 'sl': sl, 'tp': tp
+        })
+
+    # --- Determine Overall Signal for Frontend ---
+    current_open_trades = [t for t in symbol_trades if t['status'] == 'OPEN']
+    if not current_open_trades:
+        new_signal = 'WAITING'
+    else:
+        # Signal is based on the type of the most recent open trade
+        new_signal = f"{current_open_trades[-1]['type']}_HOLD"
+
+    # --- History Management ---
+    if len(symbol_trades) > 20: # Keep a longer history
+        # Keep all open trades plus the most recent 20 closed trades
+        open_trades = [t for t in symbol_trades if t['status'] == 'OPEN']
+        closed_trades = sorted([t for t in symbol_trades if t['status'] == 'CLOSED'], key=lambda x: x['close_time'], reverse=True)
+        trade_history[symbol] = open_trades + closed_trades[:20]
 
     return new_signal, df
 
@@ -132,7 +211,7 @@ def get_signals():
                 'signal': signal,
                 'price': round(latest_price, 2),
                 'chart_data': chart_data,
-                'history': signal_states[symbol]['history']
+                'history': trade_history[symbol] # Use the new global state
             }
         except Exception as e:
             all_signals[symbol.lower()] = {

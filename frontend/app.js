@@ -116,15 +116,30 @@ document.addEventListener('DOMContentLoaded', () => {
         // reverse the history to show the latest first
         [...history].reverse().forEach(trade => {
             const p = document.createElement('p');
-            let tradeText = `${trade.open_time} - ${trade.type} @ ${trade.open_price.toFixed(2)}`;
+            // Format open time for better readability
+            const openTime = new Date(trade.open_time).toLocaleTimeString();
+            let tradeText = `${openTime} - ${trade.type} @ ${trade.open_price.toFixed(2)}`;
+
             if (trade.status === 'CLOSED') {
-                const profit = trade.close_price - trade.open_price;
-                const profitClass = trade.type === 'BUY' ? (profit > 0 ? 'profit' : 'loss') : (profit < 0 ? 'profit' : 'loss');
-                tradeText += ` → CLOSED @ ${trade.close_price.toFixed(2)}`;
+                const profit = trade.type === 'BUY'
+                    ? trade.close_price - trade.open_price
+                    : trade.open_price - trade.close_price;
+
+                const profitClass = profit >= 0 ? 'profit' : 'loss';
+                const reason = trade.reason || 'Closed';
+
+                tradeText += ` → CLOSED @ ${trade.close_price.toFixed(2)} (${reason}) `;
+                const profitSpan = document.createElement('span');
+                profitSpan.className = profitClass;
+                profitSpan.textContent = `P/L: ${profit.toFixed(2)}`;
+                p.textContent = tradeText;
+                p.appendChild(profitSpan);
+
             } else {
                 tradeText += ' (OPEN)';
+                p.textContent = tradeText;
             }
-            p.textContent = tradeText;
+
             historyLog.appendChild(p);
         });
     }
