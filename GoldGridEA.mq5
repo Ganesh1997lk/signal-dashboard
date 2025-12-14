@@ -24,9 +24,6 @@ input int      MagicNumber       = 140425; // EA's Unique Magic Number
 input string   OrderComment      = "GoldGridEA"; // Comment for trades
 
 //--- Filters
-input bool     UseNewsFilter     = true;   // Enable/Disable News Filter
-input int      MinutesBeforeNews = 120;    // Minutes to stop trading before High-Impact News
-input int      MinutesAfterNews  = 120;    // Minutes to resume trading after High-Impact News
 input bool     UseHolidayFilter  = true;   // Avoid trading during Holiday period
 input int      HolidayStartMonth = 12;     // Month to start holiday filter
 input int      HolidayStartDay   = 24;     // Day to start holiday filter
@@ -40,7 +37,6 @@ input int      HolidayEndDay     = 5;      // Day to end holiday filter
 CTrade trade; // Trade object for executing orders
 double g_last_buy_price = 0; // Global variable for last buy price
 double g_last_sell_price = 0; // Global variable for last sell price
-bool   g_is_news_time = false; // Global flag for news events
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -50,7 +46,6 @@ int OnInit()
    Print("EA Initializing...");
    trade.SetMagicNumber(MagicNumber); // Set the magic number for the trade object
    InitializeGridState();
-   EventSetTimer(60); // Set a timer for once per minute
    return(INIT_SUCCEEDED);
   }
 
@@ -60,16 +55,6 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    Print("EA Deinitializing...");
-   EventKillTimer();
-  }
-
-//+------------------------------------------------------------------+
-//| Timer event function                                             |
-//+------------------------------------------------------------------+
-void OnTimer()
-  {
-   // This function is called once per minute
-   CheckNewsEvents();
   }
 
 //+------------------------------------------------------------------+
@@ -199,60 +184,7 @@ bool IsTradingAllowed()
         }
      }
 
-   // --- News Filter ---
-   if(UseNewsFilter && g_is_news_time)
-     {
-      return false;
-     }
-
    return true; // Trading is allowed
-  }
-
-//+------------------------------------------------------------------+
-//| Checks for upcoming news events (called by OnTimer)              |
-//+------------------------------------------------------------------+
-void CheckNewsEvents()
-  {
-   if(!UseNewsFilter)
-     {
-      g_is_news_time = false;
-      return;
-     }
-
-   datetime from = TimeCurrent() - (MinutesBeforeNews * 60);
-   datetime to   = TimeCurrent() + (MinutesAfterNews * 60);
-
-   string symbol_currency_base = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_BASE);
-   string symbol_currency_profit = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_PROFIT);
-
-   MqlCalendarEvent events[];
-   int events_total = CalendarEventsGet(events, from, to);
-
-   if(events_total > 0)
-     {
-      for(int i = 0; i < events_total; i++)
-        {
-         // Filter for high importance events related to the symbol's currencies
-         if(events[i].importance == CALENDAR_IMPORTANCE_HIGH &&
-           (StringFind(events[i].currency, symbol_currency_base) != -1 || StringFind(events[i].currency, symbol_currency_profit) != -1))
-           {
-            datetime event_time = events[i].time;
-            // Check if we are within the prohibited time window
-            if(TimeCurrent() >= event_time - (MinutesBeforeNews * 60) && TimeCurrent() <= event_time + (MinutesAfterNews * 60))
-              {
-               if(!g_is_news_time) // Print message only once when filter becomes active
-                  PrintFormat("News filter activated: Pausing trading due to high-impact event (%s) at %s.", events[i].name, TimeToString(event_time));
-               g_is_news_time = true;
-               return; // Exit as soon as one relevant news event is found
-              }
-           }
-        }
-     }
-
-   // If the loop completes and no news was found in the window, deactivate the filter
-   if(g_is_news_time)
-      Print("News filter deactivated: Resuming trading.");
-   g_is_news_time = false;
   }
 
 //+------------------------------------------------------------------+
