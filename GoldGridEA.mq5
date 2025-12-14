@@ -6,6 +6,7 @@
 #property copyright "Copyright 2023, Your Name Here"
 #property link      "https://www.mql5.com"
 #property version   "1.20" // Version updated after panel removal
+#property strict
 
 // --- EA Input Parameters ---
 //--- Grid Settings
@@ -31,34 +32,6 @@ input int      HolidayStartMonth = 12;     // Month to start holiday filter
 input int      HolidayStartDay   = 24;     // Day to start holiday filter
 input int      HolidayEndMonth   = 1;      // Month to end holiday filter
 input int      HolidayEndDay     = 5;      // Day to end holiday filter
-
-// --- Manually added definitions to remove dependency on missing EconomicCalendar.mqh ---
-enum ENUM_CALENDAR_EVENT_IMPORTANCE
-  {
-   CALENDAR_IMPORTANCE_LOW      = 0, // Low
-   CALENDAR_IMPORTANCE_MODERATE = 1, // Moderate
-   CALENDAR_IMPORTANCE_HIGH     = 2  // High
-  };
-
-struct MqlCalendarEvent
-  {
-   ulong                      id;            // event ID
-   int                        type;          // Placeholder for ENUM_CALENDAR_EVENT_TYPE
-   int                        sector;        // Placeholder for ENUM_CALENDAR_EVENT_SECTOR
-   int                        frequency;     // Placeholder for ENUM_CALENDAR_EVENT_FREQUENCY
-   int                        time_mode;     // Placeholder for ENUM_CALENDAR_EVENT_TIMEMODE
-   ulong                      country_id;    // country ID
-   int                        unit;          // Placeholder for ENUM_CALENDAR_EVENT_UNIT
-   ENUM_CALENDAR_EVENT_IMPORTANCE importance;    // importance level
-   int                        multiplier;    // Placeholder for ENUM_CALENDAR_EVENT_MULTIPLIER
-   uint                       digits;        // number of decimal places
-   long                       time;          // event time
-   long                       prev_time;     // previous event time
-   string                     name;          // short event name
-   string                     symbol;        // symbol the event is related to
-   string                     currency;      // currency
-  };
-// --- End of manually added definitions ---
 
 // --- Include necessary libraries ---
 #include <Trade/Trade.mqh>
