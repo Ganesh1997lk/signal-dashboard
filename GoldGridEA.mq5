@@ -31,7 +31,7 @@ input int      HolidayEndMonth   = 1;      // Month to end holiday filter
 input int      HolidayEndDay     = 5;      // Day to end holiday filter
 
 // --- Include necessary libraries ---
-#include <Trade/Trade.mqh>
+#include <Trade\Trade.mqh>
 
 // --- Global Variables ---
 CTrade trade; // Trade object for executing orders
