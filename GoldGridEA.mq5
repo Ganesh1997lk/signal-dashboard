@@ -8,21 +8,21 @@
 #property version   "1.20" // Version updated after panel removal
 
 // --- EA Input Parameters ---
-sgroup "Grid Settings"
+//--- Grid Settings
 input int      GridDistance      = 500;    // Grid Distance in Points
 input double   TakeProfit        = 500;    // Take Profit in Points
 
-sgroup "Lot Sizing Settings"
+//--- Lot Sizing Settings
 input double   BalanceForLotStep = 10000;  // Balance required for each 0.01 lot step
 
-sgroup "Risk Management"
+//--- Risk Management
 input double   GlobalSL_Percent  = 30.0;   // Equity Drawdown % to Close All Positions
 
-sgroup "EA Identification"
+//--- EA Identification
 input int      MagicNumber       = 140425; // EA's Unique Magic Number
 input string   OrderComment      = "GoldGridEA"; // Comment for trades
 
-sgroup "Filters"
+//--- Filters
 input bool     UseNewsFilter     = true;   // Enable/Disable News Filter
 input int      MinutesBeforeNews = 120;    // Minutes to stop trading before High-Impact News
 input int      MinutesAfterNews  = 120;    // Minutes to resume trading after High-Impact News
@@ -47,6 +47,7 @@ bool   g_is_news_time = false; // Global flag for news events
 int OnInit()
   {
    Print("EA Initializing...");
+   trade.SetMagicNumber(MagicNumber); // Set the magic number for the trade object
    InitializeGridState();
    EventSetTimer(60); // Set a timer for once per minute
    return(INIT_SUCCEEDED);
@@ -166,11 +167,34 @@ bool IsTradingAllowed()
      {
       MqlDateTime current_time;
       TimeCurrent(current_time);
-      // Check for user-defined holiday period
-      if((current_time.mon == HolidayStartMonth && current_time.day >= HolidayStartDay) ||
-         (current_time.mon == HolidayEndMonth && current_time.day <= HolidayEndDay))
+
+      // Create comparable date integers (e.g., Dec 25th becomes 1225) to handle all cases robustly
+      int current_date_val = current_time.mon * 100 + current_time.day;
+      int holiday_start_val = HolidayStartMonth * 100 + HolidayStartDay;
+      int holiday_end_val = HolidayEndMonth * 100 + HolidayEndDay;
+
+      bool is_holiday = false;
+
+      // Case 1: Holiday period spans across the new year (e.g., Dec -> Jan)
+      if(holiday_start_val > holiday_end_val)
         {
-         return false;
+         if(current_date_val >= holiday_start_val || current_date_val <= holiday_end_val)
+           {
+            is_holiday = true;
+           }
+        }
+      // Case 2: Holiday period is within the same year (e.g., Dec 20 -> Dec 28)
+      else
+        {
+         if(current_date_val >= holiday_start_val && current_date_val <= holiday_end_val)
+           {
+            is_holiday = true;
+           }
+        }
+
+      if(is_holiday)
+        {
+         return false; // It's a holiday, so trading is not allowed
         }
      }
 
@@ -194,34 +218,37 @@ void CheckNewsEvents()
       return;
      }
 
-   datetime from = TimeCurrent();
-   datetime to = from + (MinutesAfterNews * 60);
+   datetime from = TimeCurrent() - (MinutesBeforeNews * 60);
+   datetime to   = TimeCurrent() + (MinutesAfterNews * 60);
 
    string symbol_currency_base = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_BASE);
    string symbol_currency_profit = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_PROFIT);
 
-   MqlCalendarValue values[];
-   if(CalendarValueHistory(values, from, to))
+   MqlCalendarEvent events[];
+   int events_total = CalendarEventsGet(events, from, to);
+
+   if(events_total > 0)
      {
-      for(int i = 0; i < ArraySize(values); i++)
+      for(int i = 0; i < events_total; i++)
         {
-         if(values[i].importance == CALENDAR_IMPORTANCE_HIGH)
+         // Filter for high importance events related to the symbol's currencies
+         if(events[i].importance == CALENDAR_IMPORTANCE_HIGH &&
+           (StringFind(events[i].currency, symbol_currency_base) != -1 || StringFind(events[i].currency, symbol_currency_profit) != -1))
            {
-            if(StringFind(values[i].currency, symbol_currency_base) != -1 || StringFind(values[i].currency, symbol_currency_profit) != -1)
+            datetime event_time = events[i].time;
+            // Check if we are within the prohibited time window
+            if(TimeCurrent() >= event_time - (MinutesBeforeNews * 60) && TimeCurrent() <= event_time + (MinutesAfterNews * 60))
               {
-               datetime event_time = values[i].time;
-               if(TimeCurrent() >= event_time - (MinutesBeforeNews * 60) && TimeCurrent() <= event_time + (MinutesAfterNews * 60))
-                 {
-                  if(!g_is_news_time)
-                     PrintFormat("News filter activated: Pausing trading due to high-impact event (%s) at %s.", values[i].event, TimeToString(event_time));
-                  g_is_news_time = true;
-                  return;
-                 }
+               if(!g_is_news_time) // Print message only once when filter becomes active
+                  PrintFormat("News filter activated: Pausing trading due to high-impact event (%s) at %s.", events[i].name, TimeToString(event_time));
+               g_is_news_time = true;
+               return; // Exit as soon as one relevant news event is found
               }
            }
         }
      }
 
+   // If the loop completes and no news was found in the window, deactivate the filter
    if(g_is_news_time)
       Print("News filter deactivated: Resuming trading.");
    g_is_news_time = false;
