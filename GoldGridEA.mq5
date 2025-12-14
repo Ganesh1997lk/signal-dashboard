@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2023, Your Name Here"
 #property link      "https://www.mql5.com"
-#property version   "1.10" // Version updated after review
+#property version   "1.20" // Version updated after panel removal
 
 // --- EA Input Parameters ---
 sgroup "Grid Settings"
@@ -34,14 +34,12 @@ input int      HolidayEndDay     = 5;      // Day to end holiday filter
 
 // --- Include necessary libraries ---
 #include <Trade\Trade.mqh>
-#include "DisplayPanel.mqh"
 
 // --- Global Variables ---
 CTrade trade; // Trade object for executing orders
 double g_last_buy_price = 0; // Global variable for last buy price
 double g_last_sell_price = 0; // Global variable for last sell price
 bool   g_is_news_time = false; // Global flag for news events
-CDisplayPanel *g_panel; // Pointer for our display panel
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -51,8 +49,6 @@ int OnInit()
    Print("EA Initializing...");
    InitializeGridState();
    EventSetTimer(60); // Set a timer for once per minute
-   g_panel = new CDisplayPanel("GoldGridEA", 10, 25, clrWhite);
-   g_panel.Init("Gold Grid EA");
    return(INIT_SUCCEEDED);
   }
 
@@ -63,7 +59,6 @@ void OnDeinit(const int reason)
   {
    Print("EA Deinitializing...");
    EventKillTimer();
-   delete g_panel;
   }
 
 //+------------------------------------------------------------------+
@@ -115,19 +110,16 @@ void InitializeGridState()
 //+------------------------------------------------------------------+
 void OnTick()
   {
-   // --- 1. Update Display Panel ---
-   UpdatePanelInfo();
-
-   // --- 2. Risk Management Check ---
+   // --- 1. Risk Management Check ---
    CheckGlobalStopLoss();
 
-   // --- 3. Filter Checks ---
+   // --- 2. Filter Checks ---
    if(!IsTradingAllowed())
      {
       return; // Stop further execution if trading is not allowed
      }
 
-   // --- 4. Get Symbol Information ---
+   // --- 3. Get Symbol Information ---
    MqlTick latest_tick;
    SymbolInfoTick(_Symbol, latest_tick);
    double ask_price = NormalizeDouble(latest_tick.ask, _Digits);
@@ -178,7 +170,6 @@ bool IsTradingAllowed()
       if((current_time.mon == HolidayStartMonth && current_time.day >= HolidayStartDay) ||
          (current_time.mon == HolidayEndMonth && current_time.day <= HolidayEndDay))
         {
-         // Print("Holiday filter active: Pausing trading."); // This can be spammy, disable for now
          return false;
         }
      }
@@ -186,7 +177,6 @@ bool IsTradingAllowed()
    // --- News Filter ---
    if(UseNewsFilter && g_is_news_time)
      {
-      // Print("News filter active: Pausing trading."); // This can be spammy, disable for now
       return false;
      }
 
@@ -205,7 +195,7 @@ void CheckNewsEvents()
      }
 
    datetime from = TimeCurrent();
-   datetime to = from + (MinutesAfterNews * 60); // Check for news in the upcoming window
+   datetime to = from + (MinutesAfterNews * 60);
 
    string symbol_currency_base = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_BASE);
    string symbol_currency_profit = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_PROFIT);
@@ -215,7 +205,6 @@ void CheckNewsEvents()
      {
       for(int i = 0; i < ArraySize(values); i++)
         {
-         // Check for High-Impact news relevant to the symbol's currencies
          if(values[i].importance == CALENDAR_IMPORTANCE_HIGH)
            {
             if(StringFind(values[i].currency, symbol_currency_base) != -1 || StringFind(values[i].currency, symbol_currency_profit) != -1)
@@ -223,7 +212,7 @@ void CheckNewsEvents()
                datetime event_time = values[i].time;
                if(TimeCurrent() >= event_time - (MinutesBeforeNews * 60) && TimeCurrent() <= event_time + (MinutesAfterNews * 60))
                  {
-                  if(!g_is_news_time) // Print only when the state changes
+                  if(!g_is_news_time)
                      PrintFormat("News filter activated: Pausing trading due to high-impact event (%s) at %s.", values[i].event, TimeToString(event_time));
                   g_is_news_time = true;
                   return;
@@ -233,45 +222,9 @@ void CheckNewsEvents()
         }
      }
 
-   if(g_is_news_time) // Print only when the state changes
+   if(g_is_news_time)
       Print("News filter deactivated: Resuming trading.");
    g_is_news_time = false;
-  }
-
-//+------------------------------------------------------------------+
-//| Gathers data and updates the on-chart display panel              |
-//+------------------------------------------------------------------+
-void UpdatePanelInfo()
-  {
-   double pnl = 0;
-   int buy_trades = 0;
-   int sell_trades = 0;
-   string status = "Monitoring...";
-
-   // --- Calculate P/L and Trade Counts ---
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-     {
-      if(PositionGetSymbol(i) == _Symbol && PositionGetInteger(POSITION_MAGIC) == MagicNumber)
-        {
-         pnl += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-         if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
-            buy_trades++;
-         else
-            sell_trades++;
-        }
-     }
-
-   // --- Determine Status ---
-   if(g_is_news_time)
-      status = "NEWS PAUSE";
-   else if(!UseHolidayFilter) // Simplified check, assumes if Holiday filter is on, it might be active
-      status = "Trading Allowed";
-   else
-      status = "Filters Active";
-
-
-   // --- Update Panel ---
-   g_panel.Update(pnl, buy_trades, sell_trades, CalculateLotSize(), status);
   }
 
 //+------------------------------------------------------------------+
@@ -282,15 +235,13 @@ void CheckGlobalStopLoss()
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
 
-   if(balance <= 0) return; // Avoid division by zero
+   if(balance <= 0) return;
 
    double drawdown_percent = (balance - equity) / balance * 100.0;
 
-   // If drawdown exceeds the user-defined limit, close all trades
    if(drawdown_percent >= GlobalSL_Percent)
      {
       PrintFormat("Global Stop Loss triggered! Drawdown: %.2f%%. Closing all positions.", drawdown_percent);
-      // Loop through all positions and close them if they match the magic number
       for(int i = PositionsTotal() - 1; i >= 0; i--)
         {
          if(PositionGetInteger(POSITION_MAGIC) == MagicNumber)
@@ -309,14 +260,12 @@ double CalculateLotSize()
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double calculated_lot = NormalizeDouble(balance / BalanceForLotStep, 2);
 
-   // Normalize to symbol's lot step
    double lot_step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    if(lot_step > 0)
      {
       calculated_lot = floor(calculated_lot / lot_step) * lot_step;
      }
 
-   // Enforce minimum lot size
    double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    if(calculated_lot < min_lot)
      {
