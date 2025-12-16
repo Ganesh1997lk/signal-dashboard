@@ -43,13 +43,11 @@ input int    Partial_Close_Percent = 50;        // Percentage of position to clo
 input double Breakeven_Buffer_Pips = 1.0;       // Pips to add to breakeven SL
 
 //--- Trade Settings
-input ulong  MagicNumber = 12345;
+input ulong  Magic_Number = 12345;
 input uint   Slippage = 10;
 
 //--- Global variables
 CTrade trade;
-int    ZigZagHandle;
-int    ZoneZigZagHandle;
 
 //--- Enums
 enum ENUM_MARKET_TREND
@@ -92,67 +90,63 @@ S_VolumeProfileZone HVN_Zone; // We will only store the primary HVN zone
 //--- Global variables for analysis results
 ENUM_MARKET_TREND   htf_trend = TREND_NONE;
 
-//--- Struct and array for managing active trades statefully
-struct S_TradeInfo
-  {
-   long   ticket;
-   double tp1_price;
-   double tp2_price;
-   bool   is_partial_closed;
-  };
-S_TradeInfo         ActiveTrades[];
+//--- Global variables for indicator handles
+int h_zigzag_htf = INVALID_HANDLE;
+int h_zigzag_zone = INVALID_HANDLE;
 
+// --- Struct to manage the state of our trades ---
+// This allows the EA to remember TP levels and if TP1 was hit, even after a restart.
+struct ManagedTradeState
+{
+    ulong position_ticket;
+    double tp1_price;
+    bool tp1_hit;
+};
+ManagedTradeState ManagedTrades[];
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
   {
-//--- Initialize trading object
-   trade.SetExpertMagicNumber(MagicNumber);
-   trade.SetSlippage(Slippage);
-   trade.SetTypeFillingBySymbol(Symbol());
+//--- create timer
+   EventSetTimer(1); // Set a 1-second timer for ManageOpenTrades
+   ArrayResize(ManagedTrades, 0); // Initialize the array
+   trade.SetExpertMagicNumber(Magic_Number); // Set the magic number for the trade object
 
-//--- Reconstruct state of active trades on startup
+   // --- INITIALIZE INDICATOR HANDLES ---
+   h_zigzag_htf = iZigzag(Symbol(), HTF_Timeframe, ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep);
+   if(h_zigzag_htf == INVALID_HANDLE)
+     {
+      Print("Error creating ZigZag HTF indicator handle - ", GetLastError());
+      return(INIT_FAILED);
+     }
+
+   h_zigzag_zone = iZigzag(Symbol(), Zone_Timeframe, ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep);
+   if(h_zigzag_zone == INVALID_HANDLE)
+     {
+      Print("Error creating ZigZag Zone indicator handle - ", GetLastError());
+      return(INIT_FAILED);
+     }
+
+   // --- RECONSTRUCT STATE OF MANAGED TRADES ---
    for(int i = PositionsTotal() - 1; i >= 0; i--)
      {
-      if(PositionGetTicket(i))
+      ulong position_ticket = PositionGetTicket(i);
+      if(position_ticket > 0 && PositionGetString(POSITION_SYMBOL) == Symbol() && PositionGetInteger(POSITION_MAGIC) == Magic_Number)
         {
-         if(PositionGetInteger(POSITION_MAGIC) == MagicNumber && PositionGetString(POSITION_SYMBOL) == Symbol())
+         string comment = PositionGetString(POSITION_COMMENT);
+         string parts[];
+         if(StringSplit(comment, ',', parts) == 4) // Example: "SMC_EA,TICKET,TP1_PRICE,STATUS"
            {
-            S_TradeInfo info;
-            info.ticket = PositionGetInteger(POSITION_TICKET);
-
-            string comment = PositionGetString(POSITION_COMMENT);
-            string parts[];
-            StringSplit(comment, '|', parts);
-            if(ArraySize(parts) >= 3)
-              {
-               info.tp1_price = StringToDouble(StringSubstr(parts[0], 4));
-               info.tp2_price = StringToDouble(StringSubstr(parts[1], 4));
-               info.is_partial_closed = (StringToInteger(StringSubstr(parts[2], 3)) == 1);
-
-               ArrayResize(ActiveTrades, ArraySize(ActiveTrades)+1);
-               ActiveTrades[ArraySize(ActiveTrades)-1] = info;
-              }
+            ManagedTradeState trade_state;
+            trade_state.position_ticket = position_ticket;
+            trade_state.tp1_price = StringToDouble(parts[2]);
+            trade_state.tp1_hit = (parts[3] == "TP1_HIT");
+            ArrayAdd(ManagedTrades, trade_state);
+            Print("Reconstructed state for ticket #", position_ticket, ". TP1 Price: ", trade_state.tp1_price, ", TP1 Hit: ", trade_state.tp1_hit);
            }
         }
-     }
-
-//--- Get ZigZag indicator handle for HTF trend analysis
-   ZigZagHandle = iCustom(Symbol(), HTF_Timeframe, "ZigZag", ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep);
-   if(ZigZagHandle == INVALID_HANDLE)
-     {
-      printf("Error creating HTF ZigZag indicator handle - error %d", GetLastError());
-      return(INIT_FAILED);
-     }
-
-//--- Get ZigZag indicator handle for Zone_Timeframe analysis
-   ZoneZigZagHandle = iCustom(Symbol(), Zone_Timeframe, "ZigZag", ZigZag_Depth, ZigZag_Deviation, ZigZag_Backstep);
-   if(ZoneZigZagHandle == INVALID_HANDLE)
-     {
-      printf("Error creating Zone ZigZag indicator handle - error %d", GetLastError());
-      return(INIT_FAILED);
      }
 
 //---
@@ -164,57 +158,81 @@ int OnInit()
 void OnDeinit(const int reason)
   {
 //--- Release indicator handles
-   IndicatorRelease(ZigZagHandle);
-   IndicatorRelease(ZoneZigZagHandle);
+   IndicatorRelease(h_zigzag_htf);
+   IndicatorRelease(h_zigzag_zone);
   }
+
 //+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
   {
-   // New bar detection timers
-   static datetime last_htf_bar_time = 0;
-   static datetime last_zone_bar_time = 0;
-   static datetime last_entry_bar_time = 0;
+   CheckForNewBar();
+  }
 
-   // Check for new HTF bar
-   datetime current_htf_bar_time = (datetime)SeriesInfoInteger(Symbol(), HTF_Timeframe, SERIES_LASTBAR_DATE);
-   if(current_htf_bar_time > last_htf_bar_time)
+//+------------------------------------------------------------------+
+//| Timer function                                                   |
+//+------------------------------------------------------------------+
+void OnTimer()
+  {
+   ManageOpenTrades();
+   // Optional: Redraw visuals on a timer if needed, but can be resource-intensive
+   // DrawVisuals();
+  }
+
+//+------------------------------------------------------------------+
+//| Check for new bars on different timeframes                       |
+//+------------------------------------------------------------------+
+void CheckForNewBar()
+  {
+   static datetime last_bar_time_htf = 0;
+   static datetime last_bar_time_zone = 0;
+   static datetime last_bar_time_entry = 0;
+
+   datetime current_bar_time_htf = (datetime)SeriesInfoInteger(Symbol(), HTF_Timeframe, SERIES_LASTBAR_DATE);
+   datetime current_bar_time_zone = (datetime)SeriesInfoInteger(Symbol(), Zone_Timeframe, SERIES_LASTBAR_DATE);
+   datetime current_bar_time_entry = (datetime)SeriesInfoInteger(Symbol(), Entry_Timeframe, SERIES_LASTBAR_DATE);
+
+   bool is_new_htf_bar = false;
+   bool is_new_zone_bar = false;
+   bool is_new_entry_bar = false;
+
+   if(current_bar_time_htf > last_bar_time_htf)
      {
-      last_htf_bar_time = current_htf_bar_time;
-      htf_trend = GetMarketTrend(); // Update trend only on new HTF bar
+      last_bar_time_htf = current_bar_time_htf;
+      is_new_htf_bar = true;
+      htf_trend = GetMarketTrend(); // Update trend on new HTF bar
      }
-
-   // Check for new Zone Timeframe bar
-   datetime current_zone_bar_time = (datetime)SeriesInfoInteger(Symbol(), Zone_Timeframe, SERIES_LASTBAR_DATE);
-   if(current_zone_bar_time > last_zone_bar_time)
+   if(current_bar_time_zone > last_bar_time_zone)
      {
-      last_zone_bar_time = current_zone_bar_time;
+      last_bar_time_zone = current_bar_time_zone;
+      is_new_zone_bar = true;
       // Update zones and volume profile on new Zone bar
       FindOrderBlocks();
       FindFairValueGaps();
       CalculateVolumeProfile();
+      DrawVisuals(); // Redraw visuals only when zones change
+     }
+   if(current_bar_time_entry > last_bar_time_entry)
+     {
+       last_bar_time_entry = current_bar_time_entry;
+       is_new_entry_bar = true;
      }
 
-   // Check for new Entry Timeframe bar
-   datetime current_entry_bar_time = (datetime)SeriesInfoInteger(Symbol(), Entry_Timeframe, SERIES_LASTBAR_DATE);
-   if(current_entry_bar_time > last_entry_bar_time)
+   // --- CORE LOGIC EXECUTION ---
+   // Check for entries on a new entry bar, but only if zones have been analyzed at least once
+   if(is_new_entry_bar && ArraySize(OrderBlocks) > 0)
      {
-      last_entry_bar_time = current_entry_bar_time;
-      // Check for entries only on a new entry bar
       CheckForTradeEntry(htf_trend);
      }
-
-//--- These functions need to run on every tick to be responsive
-   ManageOpenTrades();
-   DrawVisuals();
   }
+
 //+------------------------------------------------------------------+
 //| Deletes all created graphical objects                            |
 //+------------------------------------------------------------------+
 void DeleteAllObjects()
   {
-   ObjectsDeleteAll(0, "smc_"); // Deletes all objects with the "smc_" prefix
+   ObjectsDeleteAll(0, "smc_");
   }
 //+------------------------------------------------------------------+
 //| Draws all visual elements on the chart                           |
@@ -227,13 +245,12 @@ void DrawVisuals()
    DrawVolumeProfile();
   }
 //+------------------------------------------------------------------+
-//| Helper to create a styled rectangle object on the right of the chart |
+//| Helper to create a styled rectangle object                       |
 //+------------------------------------------------------------------+
 void DrawPriceZone(string name, double top_price, double bottom_price, color clr)
   {
-   // Draw the zone for the last 50 bars on the chart for visibility
    datetime time2 = TimeCurrent();
-   datetime time1 = time2 - (_Period * 60 * 50); // 50 bars back from now
+   datetime time1 = time2 - (PeriodSeconds(ChartPeriod()) * 100); // Draw for 100 bars
 
    ObjectCreate(0, name, OBJ_RECTANGLE, 0, time1, top_price, time2, bottom_price);
    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
@@ -276,55 +293,39 @@ void DrawVolumeProfile()
       DrawPriceZone(name, HVN_Zone.top_price, HVN_Zone.bottom_price, clrGold);
      }
   }
+
 //+------------------------------------------------------------------+
 //| Checks for confluence and entry signals to place a trade         |
 //+------------------------------------------------------------------+
 void CheckForTradeEntry(ENUM_MARKET_TREND trend)
   {
-   // --- Single Trade Constraint ---
    if(PositionsTotal() > 0)
      {
-      for(int i = PositionsTotal() - 1; i >= 0; i--)
-        {
-         if(PositionGetTicket(i))
-           {
-            if(PositionGetInteger(POSITION_MAGIC) == MagicNumber && PositionGetString(POSITION_SYMBOL) == Symbol())
-              {
-               return; // A trade is already open for this EA and symbol
-              }
-           }
-        }
+      // A trade managed by this EA instance already exists
+      if(ArraySize(ManagedTrades) > 0) return;
      }
 
-   if(trend == TREND_NONE) return; // Do not trade in ranging markets
+   if(trend == TREND_NONE) return;
 
-   // Get latest price data for checks
    MqlTick latest_tick;
    if(!SymbolInfoTick(Symbol(), latest_tick)) return;
 
-   // Get Fibonacci levels for confluence check
    double fib_50 = 0, fib_61_8 = 0;
    bool fib_ok = GetFibonacciRetracementLevels(fib_50, fib_61_8);
 
-   // --- CHECK FOR BULLISH ENTRY ---
    if(trend == TREND_BULLISH)
      {
-      // Loop through Bullish OrderBlocks
       for(int i=0; i < ArraySize(OrderBlocks); i++)
         {
          if(!OrderBlocks[i].is_bullish) continue;
 
-         // Confluence Check
          int confluence_score = 0;
-         // 1. Is the OB overlapping with the HVN?
          if(OrderBlocks[i].bottom_price < HVN_Zone.top_price && OrderBlocks[i].top_price > HVN_Zone.bottom_price)
             confluence_score++;
-         // 2. Is the OB near a Fibonacci level?
-         if(fib_ok && (MathAbs(OrderBlocks[i].bottom_price - fib_50) < ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5) ||
-            MathAbs(OrderBlocks[i].bottom_price - fib_61_8) < ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5)))
+         if(fib_ok && (MathAbs(OrderBlocks[i].bottom_price - fib_50) < (SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5) ||
+            MathAbs(OrderBlocks[i].bottom_price - fib_61_8) < (SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5)))
             confluence_score++;
 
-         // Check for FVG confluence with the OB
          for(int j=0; j < ArraySize(FairValueGaps); j++)
            {
             if(FairValueGaps[j].is_bullish && FairValueGaps[j].bottom_price < OrderBlocks[i].top_price && FairValueGaps[j].top_price > OrderBlocks[i].bottom_price)
@@ -334,29 +335,24 @@ void CheckForTradeEntry(ENUM_MARKET_TREND trend)
               }
            }
 
-         // If we have enough confluence factors and the current price is within the OB zone...
          if(confluence_score >= Min_Confluence_Score && latest_tick.ask <= OrderBlocks[i].top_price && latest_tick.ask >= OrderBlocks[i].bottom_price)
            {
-            // Final check: Look for a bullish engulfing pattern on the entry timeframe
             if(CheckForEngulfingPattern(TREND_BULLISH))
               {
-               // All conditions met, calculate SL/TP and execute the trade
                double entry_price = latest_tick.ask;
-               double sl_price = OrderBlocks[i].bottom_price - ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 2); // SL below the OB
+               double sl_price = OrderBlocks[i].bottom_price - (SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 2);
                double sl_pips = (entry_price - sl_price) / _Point;
                double tp1_price = entry_price + (sl_pips * Take_Profit_1_RR * _Point);
                double tp2_price = entry_price + (sl_pips * Take_Profit_2_RR * _Point);
 
                ExecuteTrade(TREND_BULLISH, entry_price, sl_price, tp1_price, tp2_price);
-               return; // Exit after finding one valid trade to avoid multiple trades on the same signal
+               return;
               }
            }
         }
      }
-   // --- CHECK FOR BEARISH ENTRY ---
    else if(trend == TREND_BEARISH)
      {
-      // Loop through Bearish OrderBlocks
       for(int i=0; i < ArraySize(OrderBlocks); i++)
         {
          if(OrderBlocks[i].is_bullish) continue;
@@ -364,8 +360,8 @@ void CheckForTradeEntry(ENUM_MARKET_TREND trend)
          int confluence_score = 0;
          if(OrderBlocks[i].bottom_price < HVN_Zone.top_price && OrderBlocks[i].top_price > HVN_Zone.bottom_price)
             confluence_score++;
-         if(fib_ok && (MathAbs(OrderBlocks[i].top_price - fib_50) < ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5) ||
-            MathAbs(OrderBlocks[i].top_price - fib_61_8) < ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5)))
+         if(fib_ok && (MathAbs(OrderBlocks[i].top_price - fib_50) < (SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5) ||
+            MathAbs(OrderBlocks[i].top_price - fib_61_8) < (SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5)))
             confluence_score++;
 
          for(int j=0; j < ArraySize(FairValueGaps); j++)
@@ -382,18 +378,19 @@ void CheckForTradeEntry(ENUM_MARKET_TREND trend)
             if(CheckForEngulfingPattern(TREND_BEARISH))
               {
                double entry_price = latest_tick.bid;
-               double sl_price = OrderBlocks[i].top_price + ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 2); // SL above the OB
+               double sl_price = OrderBlocks[i].top_price + (SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 2);
                double sl_pips = (sl_price - entry_price) / _Point;
                double tp1_price = entry_price - (sl_pips * Take_Profit_1_RR * _Point);
                double tp2_price = entry_price - (sl_pips * Take_Profit_2_RR * _Point);
 
                ExecuteTrade(TREND_BEARISH, entry_price, sl_price, tp1_price, tp2_price);
-               return; // Exit after finding one valid trade
+               return;
               }
            }
         }
      }
   }
+
 //+------------------------------------------------------------------+
 //| Checks for a valid engulfing pattern on the entry timeframe      |
 //+------------------------------------------------------------------+
@@ -403,165 +400,224 @@ bool CheckForEngulfingPattern(ENUM_MARKET_TREND trend)
    if(CopyRates(Symbol(), Entry_Timeframe, 0, 3, rates) < 3)
       return false;
 
-   // We check the last two *closed* candles (index 1 and 2)
    ArraySetAsSeries(rates, true);
    MqlRates trigger_candle = rates[1];
    MqlRates prev_candle = rates[2];
 
    if(trend == TREND_BULLISH)
      {
-      // Must be a bullish engulfing: trigger is up, previous is down, trigger engulfs previous
       if(trigger_candle.close > trigger_candle.open &&
          prev_candle.close < prev_candle.open &&
          trigger_candle.close > prev_candle.open &&
          trigger_candle.open < prev_candle.close)
          return true;
      }
-   else // Bearish
+   else
      {
-      // Must be a bearish engulfing: trigger is down, previous is up, trigger engulfs previous
       if(trigger_candle.close < trigger_candle.open &&
          prev_candle.close > prev_candle.open &&
-         trigger_candle.close < prev_candle.open &&
+         trigger_candle.close < prev_candle.open && // Corrected logic: close < open for bearish
          trigger_candle.open > prev_candle.close)
          return true;
      }
-
    return false;
   }
+
 //+------------------------------------------------------------------+
 //| Executes a trade with proper risk management                     |
 //+------------------------------------------------------------------+
 void ExecuteTrade(ENUM_MARKET_TREND trend, double entry_price, double sl_price, double tp1_price, double tp2_price)
   {
-   // --- Calculate Lot Size based on Risk ---
    double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double risk_amount = account_balance * (Risk_Percent_Per_Trade / 100.0);
-   double sl_pips = MathAbs(entry_price - sl_price) / SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+   double sl_pips = MathAbs(entry_price - sl_price) / _Point;
    double tick_value = SymbolInfoDouble(Symbol(), SYMBOL_TRADE_TICK_VALUE);
+   if(sl_pips <= 0 || tick_value <=0)
+     {
+       Print("Invalid SL pips or Tick Value for lot calculation. SL Pips: ", sl_pips, ", Tick Value: ", tick_value);
+       return;
+     }
    double lot_size = (risk_amount / (sl_pips * tick_value));
 
-   // Normalize and check against min/max lot size
    lot_size = NormalizeDouble(lot_size, 2);
    double min_lot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MIN);
    double max_lot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MAX);
-   if(lot_size < min_lot) lot_size = min_lot;
-   if(lot_size > max_lot) lot_size = max_lot;
+   double vol_step = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_STEP);
 
-   // --- Execute Trade ---
-   MqlTradeRequest request={0};
-   MqlTradeResult  result={0};
-   request.action = TRADE_ACTION_DEAL;
-   request.symbol = Symbol();
-   request.volume = lot_size;
-   request.magic  = MagicNumber;
-   request.deviation = Slippage;
-   request.sl = sl_price;
-   request.tp = tp1_price; // Set initial TP to TP1
-   // Embed TP1/TP2 info into the comment. Format: "TP1:price|TP2:price|PC:0" (PC=Partial Closed)
-   request.comment = "TP1:" + DoubleToString(tp1_price, _Digits) + "|TP2:" + DoubleToString(tp2_price, _Digits) + "|PC:0";
+   lot_size = fmax(min_lot, floor(lot_size / vol_step) * vol_step);
+   lot_size = fmin(max_lot, lot_size);
 
-
-   if(trend == TREND_BULLISH)
+   if(lot_size < min_lot)
      {
-      request.type = ORDER_TYPE_BUY;
-      request.price = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
+      Print("Calculated lot size ", lot_size, " is less than minimum ", min_lot);
+      return;
+     }
+
+   string trade_type = (trend == TREND_BULLISH) ? "BUY" : "SELL";
+
+   // --- Set initial TP to TP1 ---
+   // The final TP (TP2) will be set after TP1 is hit and position is partially closed.
+   if(trade.PositionOpen(Symbol(), (trend == TREND_BULLISH) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL, lot_size, (trend == TREND_BULLISH) ? SymbolInfoDouble(Symbol(), SYMBOL_ASK) : SymbolInfoDouble(Symbol(), SYMBOL_BID), sl_price, tp1_price))
+     {
+        // After opening, get the position ticket to manage its state
+        if(PositionSelect(Symbol()))
+          {
+             ulong ticket = PositionGetInteger(POSITION_TICKET);
+
+             // Create a new state object for our managed trade
+             ManagedTradeState new_trade;
+             new_trade.position_ticket = ticket;
+             new_trade.tp1_price = tp1_price;
+             new_trade.tp1_hit = false;
+             ArrayAdd(ManagedTrades, new_trade);
+
+             // IMPORTANT: Update the comment of the just-opened position to store its state
+             // Format: "SMC_EA,TICKET,TP1_PRICE,STATUS"
+             string comment = "SMC_EA," + (string)ticket + "," + DoubleToString(tp1_price, _Digits) + ",TP1_PENDING";
+             if(!trade.PositionModify(ticket, PositionGetDouble(POSITION_SL), PositionGetDouble(POSITION_TP)))
+                {
+                   Print("Could not modify position to set initial comment. Error: ", GetLastError());
+                }
+             else
+                {
+                   // CTrade doesn't have a direct comment modify, we need to do it via request
+                    MqlTradeRequest request;
+                    MqlTradeResult result;
+                    request.action = TRADE_ACTION_MODIFY;
+                    request.position = ticket;
+                    request.comment = comment;
+                    if(!OrderSend(request, result))
+                    {
+                        Print("Failed to set comment on position #", ticket, " Error: ", GetLastError());
+                    }
+                }
+          }
+        else
+          {
+             Print("Failed to select position after opening trade. Cannot manage state.");
+          }
      }
    else
      {
-      request.type = ORDER_TYPE_SELL;
-      request.price = SymbolInfoDouble(Symbol(), SYMBOL_BID);
-     }
-
-   if(OrderSend(request,result))
-     {
-      if(result.retcode == TRADE_RETCODE_DONE)
-        {
-         // After sending the order, we need to get the POSITION ticket, not the deal ticket
-         if(PositionSelect(Symbol()))
-           {
-            S_TradeInfo info;
-            info.ticket = PositionGetInteger(POSITION_TICKET);
-            info.tp1_price = tp1_price;
-            info.tp2_price = tp2_price;
-            info.is_partial_closed = false;
-            ArrayResize(ActiveTrades, ArraySize(ActiveTrades)+1);
-            ActiveTrades[ArraySize(ActiveTrades)-1] = info;
-           }
-        }
-     }
-   else
-     {
-      printf("OrderSend error %d", GetLastError());
+      Print("PositionOpen failed for ", trade_type, ". Error: ", GetLastError());
      }
   }
+
 //+------------------------------------------------------------------+
-//| Manages open trades for partial close and SL to BE               |
+//| Manage Open Trades                                               |
 //+------------------------------------------------------------------+
 void ManageOpenTrades()
   {
-   for(int i = ArraySize(ActiveTrades)-1; i >= 0; i--)
+   MqlTick latest_tick;
+   SymbolInfoTick(Symbol(), latest_tick);
+
+   for(int i = ArraySize(ManagedTrades) - 1; i >= 0; i--)
      {
-      if(PositionSelectByTicket(ActiveTrades[i].ticket))
+      if(!PositionSelectByTicket(ManagedTrades[i].position_ticket))
         {
-         if(!ActiveTrades[i].is_partial_closed)
+         ArrayRemove(ManagedTrades, i, 1);
+         continue;
+        }
+
+      if(!ManagedTrades[i].tp1_hit)
+        {
+         long pos_type = PositionGetInteger(POSITION_TYPE);
+         double current_price = (pos_type == POSITION_TYPE_BUY) ? latest_tick.bid : latest_tick.ask;
+         double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+
+         bool tp1_triggered = false;
+         if(pos_type == POSITION_TYPE_BUY && current_price >= ManagedTrades[i].tp1_price)
            {
-            ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            double current_price = SymbolInfoDouble(Symbol(), (type == POSITION_TYPE_BUY) ? SYMBOL_BID : SYMBOL_ASK);
+            tp1_triggered = true;
+           }
+         else if(pos_type == POSITION_TYPE_SELL && current_price <= ManagedTrades[i].tp1_price)
+           {
+            tp1_triggered = true;
+           }
+         if(tp1_triggered)
+           {
+            double initial_volume = PositionGetDouble(POSITION_VOLUME);
+            double volume_to_close = initial_volume * (Partial_Close_Percent / 100.0);
+            double vol_step = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_STEP);
+            volume_to_close = floor(volume_to_close / vol_step) * vol_step;
 
-            bool tp1_hit = false;
-            if(type == POSITION_TYPE_BUY && current_price >= ActiveTrades[i].tp1_price) tp1_hit = true;
-            if(type == POSITION_TYPE_SELL && current_price <= ActiveTrades[i].tp1_price) tp1_hit = true;
-
-            if(tp1_hit)
+            if(volume_to_close > 0)
               {
-               double volume = PositionGetDouble(POSITION_VOLUME);
-               double close_volume = NormalizeDouble(volume * (Partial_Close_Percent / 100.0), 2);
-
-               if(trade.PositionClose(ActiveTrades[i].ticket, close_volume))
+                if(trade.PositionClose(ManagedTrades[i].position_ticket, (ulong)round(volume_to_close * 100)))
                  {
-                  double be_level = PositionGetDouble(POSITION_OPEN_PRICE);
-                  if(type == POSITION_TYPE_BUY) be_level += Breakeven_Buffer_Pips * SymbolInfoDouble(Symbol(), SYMBOL_POINT);
-                  else be_level -= Breakeven_Buffer_Pips * SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+                  Print("Successfully closed partial position for ticket #", ManagedTrades[i].position_ticket);
 
-                  if(trade.PositionModify(ActiveTrades[i].ticket, be_level, ActiveTrades[i].tp2_price))
+                  // Move SL to breakeven + buffer
+                  double be_price = open_price;
+                  if(pos_type == POSITION_TYPE_BUY) be_price += Breakeven_Buffer_Pips * _Point;
+                  else be_price -= Breakeven_Buffer_Pips * _Point;
+
+                  // Calculate TP2 based on original SL
+                  double original_sl = PositionGetDouble(POSITION_SL);
+                  double sl_pips = MathAbs(open_price - original_sl) / _Point;
+                  double tp2_price = 0;
+                  if(pos_type == POSITION_TYPE_BUY) tp2_price = open_price + (sl_pips * Take_Profit_2_RR * _Point);
+                  else tp2_price = open_price - (sl_pips * Take_Profit_2_RR * _Point);
+
+                  if(trade.PositionModify(ManagedTrades[i].position_ticket, be_price, tp2_price))
                     {
-                     ActiveTrades[i].is_partial_closed = true;
+                      Print("Successfully moved SL to breakeven and set TP2 for ticket #", ManagedTrades[i].position_ticket);
+                      ManagedTrades[i].tp1_hit = true;
+
+                      // Update comment to reflect state change
+                      string comment = "SMC_EA," + (string)ManagedTrades[i].position_ticket + "," + DoubleToString(ManagedTrades[i].tp1_price, _Digits) + ",TP1_HIT";
+                      MqlTradeRequest request;
+                      MqlTradeResult result;
+                      request.action = TRADE_ACTION_MODIFY;
+                      request.position = ManagedTrades[i].position_ticket;
+                      request.comment = comment;
+                      if(!OrderSend(request, result))
+                      {
+                          Print("Failed to update comment on position #", ManagedTrades[i].position_ticket, " Error: ", GetLastError());
+                      }
                     }
+                  else
+                    {
+                      Print("Error modifying position for BE/TP2 on ticket #", ManagedTrades[i].position_ticket, ". Error: ", GetLastError());
+                    }
+                 }
+                else
+                 {
+                  Print("Error closing partial position for ticket #", ManagedTrades[i].position_ticket, ". Error: ", GetLastError());
                  }
               }
            }
         }
-      else
-        {
-         ArrayRemove(ActiveTrades, i, 1);
-        }
      }
   }
+
 //+------------------------------------------------------------------+
 //| Calculates the Volume Profile and identifies the HVN zone        |
 //+------------------------------------------------------------------+
 void CalculateVolumeProfile()
   {
-   // Get historical data from the Zone_Timeframe
    MqlRates rates[];
    if(CopyRates(Symbol(), Zone_Timeframe, 0, CalculationBars, rates) < CalculationBars)
      {
-      printf("Not enough data for Volume Profile calculation");
+      Print("Not enough data for Volume Profile calculation");
       return;
      }
 
-   // Find the min and max price over the period
-   double min_price = rates[ArrayMinimum(rates, WHOLE_ARRAY, 0)].low;
-   double max_price = rates[ArrayMaximum(rates, WHOLE_ARRAY, 0)].high;
+   double min_price, max_price;
+   int min_pos, max_pos;
+   ArrayGetMax(rates,0,CalculationBars,max_pos);
+   ArrayGetMin(rates,0,CalculationBars,min_pos);
+   min_price = rates[min_pos].low;
+   max_price = rates[max_pos].high;
 
-   // Create price bins
+   if(VolumeProfile_Bins <= 0) return;
    double bin_size = (max_price - min_price) / VolumeProfile_Bins;
+   if(bin_size <= 0) return;
+
    long   volume_per_bin[];
    ArrayResize(volume_per_bin, VolumeProfile_Bins);
    ArrayInitialize(volume_per_bin, 0);
 
-   // Distribute volume into bins
    for(int i=0; i<CalculationBars; i++)
      {
       int start_bin = (int)((rates[i].low - min_price) / bin_size);
@@ -574,7 +630,6 @@ void CalculateVolumeProfile()
         }
      }
 
-   // Find the Point of Control (POC) - bin with the highest volume
    long max_volume = 0;
    int poc_index = -1;
    for(int i=0; i<VolumeProfile_Bins; i++)
@@ -588,11 +643,9 @@ void CalculateVolumeProfile()
 
    if(poc_index == -1) return;
 
-   // Identify HVN cluster based on threshold
    int hvn_start_index = poc_index;
    int hvn_end_index = poc_index;
 
-   // Expand downwards from POC
    for(int i = poc_index - 1; i >= 0; i--)
      {
       if(volume_per_bin[i] >= max_volume * (HVN_Threshold_Percent / 100.0))
@@ -601,7 +654,6 @@ void CalculateVolumeProfile()
          break;
      }
 
-   // Expand upwards from POC
    for(int i = poc_index + 1; i < VolumeProfile_Bins; i++)
      {
       if(volume_per_bin[i] >= max_volume * (HVN_Threshold_Percent / 100.0))
@@ -610,7 +662,6 @@ void CalculateVolumeProfile()
          break;
      }
 
-   // Store the HVN zone
    HVN_Zone.bottom_price = min_price + (hvn_start_index * bin_size);
    HVN_Zone.top_price = min_price + ((hvn_end_index + 1) * bin_size);
   }
@@ -620,12 +671,11 @@ void CalculateVolumeProfile()
 bool GetFibonacciRetracementLevels(double &level_50, double &level_61_8)
   {
    double zigzag_buffer[];
-   if(CopyBuffer(ZoneZigZagHandle, 0, 0, Fibo_Lookback_Bars, zigzag_buffer) <= 0)
+   if(CopyBuffer(h_zigzag_zone, 0, 0, Fibo_Lookback_Bars, zigzag_buffer) <= 0)
      return false;
 
    ArraySetAsSeries(zigzag_buffer, true);
 
-   // Find the last two swing points (one high, one low)
    double p1=0, p2=0;
    int swings_found=0;
    for(int i=0; i<Fibo_Lookback_Bars; i++)
@@ -645,13 +695,12 @@ bool GetFibonacciRetracementLevels(double &level_50, double &level_61_8)
    double low = MathMin(p1,p2);
    double range = high - low;
 
-   // Direction of the range determines if we're looking for retracement up or down
-   if(p1 > p2) // Downtrend swing (High to Low)
+   if(p1 > p2)
      {
       level_50 = high - (range * 0.5);
       level_61_8 = high - (range * 0.618);
      }
-   else // Uptrend swing (Low to High)
+   else
      {
       level_50 = low + (range * 0.5);
       level_61_8 = low + (range * 0.618);
@@ -664,35 +713,27 @@ bool GetFibonacciRetracementLevels(double &level_50, double &level_61_8)
 //+------------------------------------------------------------------+
 void FindOrderBlocks()
   {
-   // Clear the array on each run to find fresh zones
    ArrayFree(OrderBlocks);
 
    MqlRates rates[];
    if(CopyRates(Symbol(), Zone_Timeframe, 0, OB_Lookback_Bars, rates) < OB_Lookback_Bars)
      {
-      printf("Error copying rates for OB detection - error %d", GetLastError());
+      Print("Error copying rates for OB detection - error ", GetLastError());
       return;
      }
    ArraySetAsSeries(rates, true);
 
-   // To confirm BOS, we need ZigZag data on the Zone_Timeframe
    double zigzag_buffer[];
-   if(CopyBuffer(ZoneZigZagHandle, 0, 0, OB_Lookback_Bars, zigzag_buffer) <= 0)
+   if(CopyBuffer(h_zigzag_zone, 0, 0, OB_Lookback_Bars, zigzag_buffer) <= 0)
      {
-       return; // Not enough data
+       return;
      }
    ArraySetAsSeries(zigzag_buffer, true);
 
-   // Loop through recent bars to find potential OBs
-   for(int i=5; i < OB_Lookback_Bars - 2; i++) // Start a few bars in to have room for BOS check
+   for(int i=5; i < OB_Lookback_Bars - 2; i++)
      {
-      // --- Look for Bullish OB (last down candle before up move)
       if(rates[i].open > rates[i].close && rates[i-1].open < rates[i-1].close)
         {
-         // Potential Bullish OB found (candle at index 'i')
-         // Now, check if a Break of Structure (BOS) occurred after this candle
-         // A BOS is a new high after the OB
-         double ob_high = rates[i].high;
          double subsequent_high = 0;
          int subsequent_high_index = -1;
 
@@ -705,11 +746,10 @@ void FindOrderBlocks()
               }
            }
 
-         // Find the last major swing high before the OB
          double prior_swing_high = 0;
          for(int k=i+1; k < OB_Lookback_Bars; k++)
            {
-            if(zigzag_buffer[k] == rates[k].high) // A ZigZag high point is exactly on the candle's high
+            if(zigzag_buffer[k] > 0 && zigzag_buffer[k] == rates[k].high)
               {
                prior_swing_high = zigzag_buffer[k];
                break;
@@ -724,15 +764,17 @@ void FindOrderBlocks()
               ob.is_bullish = true;
               ob.is_mitigated = false;
 
-              // Check for mitigation
-              for(int k=subsequent_high_index; k>=0; k--)
-                {
-                 if(rates[k].low <= ob.top_price)
-                   {
-                    ob.is_mitigated = true;
-                    break;
-                   }
-                }
+              if(subsequent_high_index > 0)
+              {
+                for(int k=subsequent_high_index; k>=0; k--)
+                  {
+                   if(rates[k].low <= ob.top_price)
+                     {
+                      ob.is_mitigated = true;
+                      break;
+                     }
+                  }
+              }
 
               if(!ob.is_mitigated)
                 {
@@ -741,13 +783,10 @@ void FindOrderBlocks()
                 }
            }
         }
-      // --- Look for Bearish OB (last up candle before down move)
       else if(rates[i].open < rates[i].close && rates[i-1].open > rates[i-1].close)
         {
-         // Potential Bearish OB found (candle at index 'i')
-         double ob_low = rates[i].low;
-         double subsequent_low = rates[0].low;
-         int subsequent_low_index = 0;
+         double subsequent_low = 999999;
+         int subsequent_low_index = -1;
 
          for(int j=i-1; j>=0; j--)
            {
@@ -758,11 +797,10 @@ void FindOrderBlocks()
               }
            }
 
-         // Find the last major swing low before the OB
          double prior_swing_low = 0;
          for(int k=i+1; k < OB_Lookback_Bars; k++)
            {
-            if(zigzag_buffer[k] == rates[k].low) // A ZigZag low point is exactly on the candle's low
+            if(zigzag_buffer[k] > 0 && zigzag_buffer[k] == rates[k].low)
               {
                prior_swing_low = zigzag_buffer[k];
                break;
@@ -777,15 +815,17 @@ void FindOrderBlocks()
               ob.is_bullish = false;
               ob.is_mitigated = false;
 
-              // Check for mitigation
-              for(int k=subsequent_low_index; k>=0; k--)
-                {
-                 if(rates[k].high >= ob.bottom_price)
-                   {
-                    ob.is_mitigated = true;
-                    break;
-                   }
-                }
+              if(subsequent_low_index > 0)
+              {
+                for(int k=subsequent_low_index; k>=0; k--)
+                  {
+                   if(rates[k].high >= ob.bottom_price)
+                     {
+                      ob.is_mitigated = true;
+                      break;
+                     }
+                  }
+              }
 
               if(!ob.is_mitigated)
                 {
@@ -801,35 +841,31 @@ void FindOrderBlocks()
 //+------------------------------------------------------------------+
 void FindFairValueGaps()
   {
-   // Clear the array on each run to find fresh zones
    ArrayFree(FairValueGaps);
 
    MqlRates rates[];
    if(CopyRates(Symbol(), Zone_Timeframe, 0, FVG_Lookback_Bars, rates) < FVG_Lookback_Bars)
      {
-      printf("Error copying rates for FVG detection - error %d", GetLastError());
+      Print("Error copying rates for FVG detection - error ", GetLastError());
       return;
      }
    ArraySetAsSeries(rates, true);
 
-   // Loop through the candles to find 3-bar patterns (from oldest to newest)
-   for(int i = FVG_Lookback_Bars - 1; i >= 2; i--)
+   for(int i = FVG_Lookback_Bars - 3; i >= 0; i--)
      {
-      MqlRates c1 = rates[i];      // Oldest candle
-      MqlRates c2 = rates[i - 1];  // Middle candle
-      MqlRates c3 = rates[i - 2];  // Newest candle
+      MqlRates c1 = rates[i+2];
+      MqlRates c2 = rates[i+1];
+      MqlRates c3 = rates[i];
 
-      // Check for Bullish FVG (gap between c1 high and c3 low)
       if(c1.high < c3.low)
         {
          S_FairValueGap fvg;
          fvg.top_price = c3.low;
          fvg.bottom_price = c1.high;
          fvg.is_bullish = true;
-         fvg.is_mitigated = false; // Initially, all found FVGs are unmitigated
+         fvg.is_mitigated = false;
 
-         // Check if price has already filled this gap since it formed
-         for(int k=i-3; k>=0; k--)
+         for(int k=i-1; k>=0; k--)
            {
             if(rates[k].low <= fvg.bottom_price)
               {
@@ -840,11 +876,9 @@ void FindFairValueGaps()
 
          if(!fvg.is_mitigated)
            {
-            ArrayResize(FairValueGaps, ArraySize(FairValueGaps) + 1);
-            FairValueGaps[ArraySize(FairValueGaps) - 1] = fvg;
+            ArrayAdd(FairValueGaps, fvg);
            }
         }
-      // Check for Bearish FVG (gap between c1 low and c3 high)
       else if(c1.low > c3.high)
         {
          S_FairValueGap fvg;
@@ -853,8 +887,7 @@ void FindFairValueGaps()
          fvg.is_bullish = false;
          fvg.is_mitigated = false;
 
-         // Check if price has already filled this gap since it formed
-         for(int k=i-3; k>=0; k--)
+         for(int k=i-1; k>=0; k--)
            {
             if(rates[k].high >= fvg.top_price)
               {
@@ -865,8 +898,7 @@ void FindFairValueGaps()
 
          if(!fvg.is_mitigated)
            {
-            ArrayResize(FairValueGaps, ArraySize(FairValueGaps) + 1);
-            FairValueGaps[ArraySize(FairValueGaps) - 1] = fvg;
+            ArrayAdd(FairValueGaps, fvg);
            }
         }
      }
@@ -879,17 +911,17 @@ ENUM_MARKET_TREND GetMarketTrend()
     double zigzag_buffer[];
     MqlRates rates[];
 
-    if(CopyRates(Symbol(), HTF_Timeframe, 0, 500, rates) < 500 || CopyBuffer(ZigZagHandle, 0, 0, 500, zigzag_buffer) <= 0)
+    if(CopyRates(Symbol(), HTF_Timeframe, 0, 500, rates) < 500 || CopyBuffer(h_zigzag_htf, 0, 0, 500, zigzag_buffer) <= 0)
     {
-        printf("Error copying data for trend analysis");
+        Print("Error copying data for trend analysis");
         return TREND_NONE;
     }
 
     ArraySetAsSeries(rates, true);
     ArraySetAsSeries(zigzag_buffer, true);
 
-    double highs[2] = {0, 0}; // last_high, prev_high
-    double lows[2] = {0, 0};  // last_low, prev_low
+    double highs[2] = {0, 0};
+    double lows[2] = {0, 0};
     int high_count = 0;
     int low_count = 0;
 
@@ -897,13 +929,11 @@ ENUM_MARKET_TREND GetMarketTrend()
     {
         if(zigzag_buffer[i] > 0)
         {
-            // Check if it's a swing high
             if(zigzag_buffer[i] == rates[i].high)
             {
                 if(high_count < 2) highs[high_count] = zigzag_buffer[i];
                 high_count++;
             }
-            // Check if it's a swing low
             else if(zigzag_buffer[i] == rates[i].low)
             {
                 if(low_count < 2) lows[low_count] = zigzag_buffer[i];
