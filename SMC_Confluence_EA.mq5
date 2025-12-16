@@ -32,6 +32,9 @@ input int OB_Lookback_Bars = 200;       // Bars to scan for Order Blocks
 input int FVG_Lookback_Bars = 100;      // Bars to scan for FVGs
 input int Fibo_Lookback_Bars = 500;     // Bars to scan for Fibo swings
 
+//--- Strategy Settings
+input int Min_Confluence_Score = 2;       // Minimum number of confluence factors for entry
+
 //--- Risk Management Settings
 input double Risk_Percent_Per_Trade = 0.5;      // Risk % of account balance per trade
 input double Take_Profit_1_RR = 2.0;            // Risk:Reward for TP1
@@ -278,6 +281,21 @@ void DrawVolumeProfile()
 //+------------------------------------------------------------------+
 void CheckForTradeEntry(ENUM_MARKET_TREND trend)
   {
+   // --- Single Trade Constraint ---
+   if(PositionsTotal() > 0)
+     {
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+         if(PositionGetTicket(i))
+           {
+            if(PositionGetInteger(POSITION_MAGIC) == MagicNumber && PositionGetString(POSITION_SYMBOL) == Symbol())
+              {
+               return; // A trade is already open for this EA and symbol
+              }
+           }
+        }
+     }
+
    if(trend == TREND_NONE) return; // Do not trade in ranging markets
 
    // Get latest price data for checks
@@ -285,8 +303,8 @@ void CheckForTradeEntry(ENUM_MARKET_TREND trend)
    if(!SymbolInfoTick(Symbol(), latest_tick)) return;
 
    // Get Fibonacci levels for confluence check
-   double fib_50, fib_61_8;
-   GetFibonacciRetracementLevels(fib_50, fib_61_8);
+   double fib_50 = 0, fib_61_8 = 0;
+   bool fib_ok = GetFibonacciRetracementLevels(fib_50, fib_61_8);
 
    // --- CHECK FOR BULLISH ENTRY ---
    if(trend == TREND_BULLISH)
@@ -302,8 +320,8 @@ void CheckForTradeEntry(ENUM_MARKET_TREND trend)
          if(OrderBlocks[i].bottom_price < HVN_Zone.top_price && OrderBlocks[i].top_price > HVN_Zone.bottom_price)
             confluence_score++;
          // 2. Is the OB near a Fibonacci level?
-         if(MathAbs(OrderBlocks[i].bottom_price - fib_50) < (SymbolInfoDouble(Symbol(), SYMBOL_SPREAD) * 5) ||
-            MathAbs(OrderBlocks[i].bottom_price - fib_61_8) < (SymbolInfoDouble(Symbol(), SYMBOL_SPREAD) * 5))
+         if(fib_ok && (MathAbs(OrderBlocks[i].bottom_price - fib_50) < ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5) ||
+            MathAbs(OrderBlocks[i].bottom_price - fib_61_8) < ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5)))
             confluence_score++;
 
          // Check for FVG confluence with the OB
@@ -316,18 +334,18 @@ void CheckForTradeEntry(ENUM_MARKET_TREND trend)
               }
            }
 
-         // If we have at least 2 confluence factors and the current price is within the OB zone...
-         if(confluence_score >= 2 && latest_tick.ask <= OrderBlocks[i].top_price && latest_tick.ask >= OrderBlocks[i].bottom_price)
+         // If we have enough confluence factors and the current price is within the OB zone...
+         if(confluence_score >= Min_Confluence_Score && latest_tick.ask <= OrderBlocks[i].top_price && latest_tick.ask >= OrderBlocks[i].bottom_price)
            {
             // Final check: Look for a bullish engulfing pattern on the entry timeframe
             if(CheckForEngulfingPattern(TREND_BULLISH))
               {
                // All conditions met, calculate SL/TP and execute the trade
                double entry_price = latest_tick.ask;
-               double sl_price = OrderBlocks[i].bottom_price - (SymbolInfoDouble(Symbol(), SYMBOL_SPREAD) * 2); // SL below the OB
-               double sl_pips = (entry_price - sl_price) / SymbolInfoDouble(Symbol(), SYMBOL_POINT);
-               double tp1_price = entry_price + (sl_pips * Take_Profit_1_RR * SymbolInfoDouble(Symbol(), SYMBOL_POINT));
-               double tp2_price = entry_price + (sl_pips * Take_Profit_2_RR * SymbolInfoDouble(Symbol(), SYMBOL_POINT));
+               double sl_price = OrderBlocks[i].bottom_price - ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 2); // SL below the OB
+               double sl_pips = (entry_price - sl_price) / _Point;
+               double tp1_price = entry_price + (sl_pips * Take_Profit_1_RR * _Point);
+               double tp2_price = entry_price + (sl_pips * Take_Profit_2_RR * _Point);
 
                ExecuteTrade(TREND_BULLISH, entry_price, sl_price, tp1_price, tp2_price);
                return; // Exit after finding one valid trade to avoid multiple trades on the same signal
@@ -346,8 +364,8 @@ void CheckForTradeEntry(ENUM_MARKET_TREND trend)
          int confluence_score = 0;
          if(OrderBlocks[i].bottom_price < HVN_Zone.top_price && OrderBlocks[i].top_price > HVN_Zone.bottom_price)
             confluence_score++;
-         if(MathAbs(OrderBlocks[i].top_price - fib_50) < (SymbolInfoDouble(Symbol(), SYMBOL_SPREAD) * 5) ||
-            MathAbs(OrderBlocks[i].top_price - fib_61_8) < (SymbolInfoDouble(Symbol(), SYMBOL_SPREAD) * 5))
+         if(fib_ok && (MathAbs(OrderBlocks[i].top_price - fib_50) < ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5) ||
+            MathAbs(OrderBlocks[i].top_price - fib_61_8) < ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 5)))
             confluence_score++;
 
          for(int j=0; j < ArraySize(FairValueGaps); j++)
@@ -359,15 +377,15 @@ void CheckForTradeEntry(ENUM_MARKET_TREND trend)
               }
            }
 
-         if(confluence_score >= 2 && latest_tick.bid >= OrderBlocks[i].bottom_price && latest_tick.bid <= OrderBlocks[i].top_price)
+         if(confluence_score >= Min_Confluence_Score && latest_tick.bid >= OrderBlocks[i].bottom_price && latest_tick.bid <= OrderBlocks[i].top_price)
            {
             if(CheckForEngulfingPattern(TREND_BEARISH))
               {
                double entry_price = latest_tick.bid;
-               double sl_price = OrderBlocks[i].top_price + (SymbolInfoDouble(Symbol(), SYMBOL_SPREAD) * 2); // SL above the OB
-               double sl_pips = (sl_price - entry_price) / SymbolInfoDouble(Symbol(), SYMBOL_POINT);
-               double tp1_price = entry_price - (sl_pips * Take_Profit_1_RR * SymbolInfoDouble(Symbol(), SYMBOL_POINT));
-               double tp2_price = entry_price - (sl_pips * Take_Profit_2_RR * SymbolInfoDouble(Symbol(), SYMBOL_POINT));
+               double sl_price = OrderBlocks[i].top_price + ((double)SymbolInfoInteger(Symbol(), SYMBOL_SPREAD) * _Point * 2); // SL above the OB
+               double sl_pips = (sl_price - entry_price) / _Point;
+               double tp1_price = entry_price - (sl_pips * Take_Profit_1_RR * _Point);
+               double tp2_price = entry_price - (sl_pips * Take_Profit_2_RR * _Point);
 
                ExecuteTrade(TREND_BEARISH, entry_price, sl_price, tp1_price, tp2_price);
                return; // Exit after finding one valid trade
@@ -466,9 +484,10 @@ void ExecuteTrade(ENUM_MARKET_TREND trend, double entry_price, double sl_price, 
             info.ticket = PositionGetInteger(POSITION_TICKET);
             info.tp1_price = tp1_price;
             info.tp2_price = tp2_price;
-         info.is_partial_closed = false;
-         ArrayResize(ActiveTrades, ArraySize(ActiveTrades)+1);
-         ActiveTrades[ArraySize(ActiveTrades)-1] = info;
+            info.is_partial_closed = false;
+            ArrayResize(ActiveTrades, ArraySize(ActiveTrades)+1);
+            ActiveTrades[ArraySize(ActiveTrades)-1] = info;
+           }
         }
      }
    else
@@ -508,14 +527,6 @@ void ManageOpenTrades()
                   if(trade.PositionModify(ActiveTrades[i].ticket, be_level, ActiveTrades[i].tp2_price))
                     {
                      ActiveTrades[i].is_partial_closed = true;
-                     // Persist the state change in the comment
-                     string new_comment = "TP1:" + DoubleToString(ActiveTrades[i].tp1_price, _Digits) + "|TP2:" + DoubleToString(ActiveTrades[i].tp2_price, _Digits) + "|PC:1";
-                     MqlTradeRequest request={0};
-                     MqlTradeResult result={0};
-                     request.action = TRADE_ACTION_MODIFY;
-                     request.position = ActiveTrades[i].ticket;
-                     request.comment = new_comment;
-                     OrderSend(request, result);
                     }
                  }
               }
@@ -829,20 +840,8 @@ void FindFairValueGaps()
 
          if(!fvg.is_mitigated)
            {
-            bool exists = false;
-            for(int j=0; j<ArraySize(FairValueGaps); j++)
-              {
-               if(FairValueGaps[j].top_price == fvg.top_price && FairValueGaps[j].bottom_price == fvg.bottom_price)
-                 {
-                  exists = true;
-                  break;
-                 }
-              }
-            if(!exists)
-              {
-               ArrayResize(FairValueGaps, ArraySize(FairValueGaps) + 1);
-               FairValueGaps[ArraySize(FairValueGaps) - 1] = fvg;
-              }
+            ArrayResize(FairValueGaps, ArraySize(FairValueGaps) + 1);
+            FairValueGaps[ArraySize(FairValueGaps) - 1] = fvg;
            }
         }
       // Check for Bearish FVG (gap between c1 low and c3 high)
@@ -866,20 +865,8 @@ void FindFairValueGaps()
 
          if(!fvg.is_mitigated)
            {
-            bool exists = false;
-            for(int j=0; j<ArraySize(FairValueGaps); j++)
-              {
-               if(FairValueGaps[j].top_price == fvg.top_price && FairValueGaps[j].bottom_price == fvg.bottom_price)
-                 {
-                  exists = true;
-                  break;
-                 }
-              }
-            if(!exists)
-              {
-               ArrayResize(FairValueGaps, ArraySize(FairValueGaps) + 1);
-               FairValueGaps[ArraySize(FairValueGaps) - 1] = fvg;
-              }
+            ArrayResize(FairValueGaps, ArraySize(FairValueGaps) + 1);
+            FairValueGaps[ArraySize(FairValueGaps) - 1] = fvg;
            }
         }
      }
@@ -889,61 +876,53 @@ void FindFairValueGaps()
 //+------------------------------------------------------------------+
 ENUM_MARKET_TREND GetMarketTrend()
   {
-   double zigzag_buffer[];
-   // Look at the last 500 bars of the HTF to find swings
-   if(CopyBuffer(ZigZagHandle, 0, 0, 500, zigzag_buffer) <= 0)
-     {
-      printf("Error copying ZigZag buffer data - error %d", GetLastError());
-      return TREND_NONE;
-     }
+    double zigzag_buffer[];
+    MqlRates rates[];
 
-   // Find the last 4 swing points
-   double swing_points[4];
-   int swing_count = 0;
-   // Reverse array to search from the most recent bar
-   ArraySetAsSeries(zigzag_buffer, true);
+    if(CopyRates(Symbol(), HTF_Timeframe, 0, 500, rates) < 500 || CopyBuffer(ZigZagHandle, 0, 0, 500, zigzag_buffer) <= 0)
+    {
+        printf("Error copying data for trend analysis");
+        return TREND_NONE;
+    }
 
-   for(int i = 0; i < 500; i++)
-     {
-      if(zigzag_buffer[i] > 0)
+    ArraySetAsSeries(rates, true);
+    ArraySetAsSeries(zigzag_buffer, true);
+
+    double highs[2] = {0, 0}; // last_high, prev_high
+    double lows[2] = {0, 0};  // last_low, prev_low
+    int high_count = 0;
+    int low_count = 0;
+
+    for(int i = 0; i < 500; i++)
+    {
+        if(zigzag_buffer[i] > 0)
         {
-         if(swing_count < 4)
-           {
-            swing_points[swing_count] = zigzag_buffer[i];
-           }
-         swing_count++;
+            // Check if it's a swing high
+            if(zigzag_buffer[i] == rates[i].high)
+            {
+                if(high_count < 2) highs[high_count] = zigzag_buffer[i];
+                high_count++;
+            }
+            // Check if it's a swing low
+            else if(zigzag_buffer[i] == rates[i].low)
+            {
+                if(low_count < 2) lows[low_count] = zigzag_buffer[i];
+                low_count++;
+            }
         }
-      if(swing_count >= 4)
-         break;
-     }
+        if(high_count >= 2 && low_count >= 2)
+            break;
+    }
 
-   // Need at least 4 points to determine structure (2 highs and 2 lows)
-   if(swing_count < 4)
-      return TREND_NONE;
+    if(high_count < 2 || low_count < 2)
+        return TREND_NONE;
 
-   // Assuming the latest point (swing_points[0]) is a high, the sequence is H, L, H, L
-   if(swing_points[0] > swing_points[1]) // Latest swing is a High
-     {
-      double last_high = swing_points[0];
-      double last_low = swing_points[1];
-      double prev_high = swing_points[2];
-      double prev_low = swing_points[3];
+    if(highs[0] > highs[1] && lows[0] > lows[1])
+        return TREND_BULLISH;
 
-      if(last_high > prev_high && last_low > prev_low)
-         return TREND_BULLISH;
-     }
-   // Assuming the latest point (swing_points[0]) is a low, the sequence is L, H, L, H
-   else // Latest swing is a Low
-     {
-      double last_low = swing_points[0];
-      double last_high = swing_points[1];
-      double prev_low = swing_points[2];
-      double prev_high = swing_points[3];
+    if(highs[0] < highs[1] && lows[0] < lows[1])
+        return TREND_BEARISH;
 
-      if(last_low < prev_low && last_high < prev_high)
-         return TREND_BEARISH;
-     }
-
-   return TREND_NONE;
-  }
+    return TREND_NONE;
+}
 //+------------------------------------------------------------------+
