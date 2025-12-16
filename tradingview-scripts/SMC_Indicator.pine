@@ -30,8 +30,12 @@ float ph = ta.pivothigh(high, i_swing_lookback_left, i_swing_lookback_right)
 float pl = ta.pivotlow(low, i_swing_lookback_left, i_swing_lookback_right)
 
 // Plotting for verification, controlled by input
-plot(series=i_show_pivots ? ph : na, title="Pivot High", color=color.new(color.red, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
-plot(series=i_show_pivots ? pl : na, title="Pivot Low", color=color.new(color.blue, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
+// Use intermediate variables to resolve potential syntax issues with complex series in plot calls
+float plot_ph = i_show_pivots ? ph : na
+float plot_pl = i_show_pivots ? pl : na
+
+plot(series=plot_ph, title="Pivot High", color=color.new(color.red, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
+plot(series=plot_pl, title="Pivot Low", color=color.new(color.blue, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
 
 // =====================================================================================
 // Section 2: Market Structure & Trend Identification
