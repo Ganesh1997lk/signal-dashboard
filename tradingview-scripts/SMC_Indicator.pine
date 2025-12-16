@@ -13,6 +13,7 @@ indicator("SMC Concepts Indicator", shorttitle="SMC", overlay=true)
 var g_settings = "--- SETTINGS ---"
 int i_swing_lookback_left = input.int(5, "Swing Lookback (Left)", inline="swing", group=g_settings)
 int i_swing_lookback_right = input.int(5, "Swing Lookback (Right)", inline="swing", group=g_settings)
+int i_ob_lookback = input.int(5, "Order Block Search Lookback", group=g_settings, tooltip="How many candles to look back from a swing point to find the origin order block.")
 int i_max_zones = input.int(50, "Max Number of Zones to Display", group=g_settings, tooltip="Limits the number of OBs and FVGs on the chart to maintain performance.")
 
 var g_visuals = "--- VISUALS ---"
@@ -29,8 +30,8 @@ float ph = ta.pivothigh(high, i_swing_lookback_left, i_swing_lookback_right)
 float pl = ta.pivotlow(low, i_swing_lookback_left, i_swing_lookback_right)
 
 // Plotting for verification, controlled by input
-plot(i_show_pivots ? ph : na, "Pivot High", color=color.new(color.red, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
-plot(i_show_pivots ? pl : na, "Pivot Low", color=color.new(color.blue, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
+plot(i_show_pivots ? ph : na, title="Pivot High", color=color.new(color.red, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
+plot(i_show_pivots ? pl : na, title="Pivot Low", color=color.new(color.blue, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
 
 // =====================================================================================
 // Section 2: Market Structure & Trend Identification
@@ -65,16 +66,32 @@ bool is_higher_low = not na(last_pl) and not na(second_last_pl) and last_pl > se
 bool is_lower_high = not na(last_ph) and not na(second_last_ph) and last_ph < second_last_ph
 bool is_lower_low = not na(last_pl) and not na(second_last_pl) and last_pl < second_last_pl
 
-// Determine Trend
-string trend = "Sideways"
-color trend_color = color.gray
+// Determine Trend using a persistent state machine
+var string trend_state = "Sideways"
 
-if is_higher_high and is_higher_low
-    trend := "Uptrend"
-    trend_color := color.new(color.green, 25)
-else if is_lower_high and is_lower_low
-    trend := "Downtrend"
-    trend_color := color.new(color.red, 25)
+// Trend State Logic
+if trend_state == "Sideways" or trend_state == "Downtrend"
+    if is_higher_high and is_higher_low
+        trend_state := "Uptrend" // Confirmed Uptrend
+
+if trend_state == "Sideways" or trend_state == "Uptrend"
+    if is_lower_high and is_lower_low
+        trend_state := "Downtrend" // Confirmed Downtrend
+
+// Change of Character (CHoCH) Logic
+if trend_state == "Uptrend"
+    if is_lower_low
+        trend_state := "Downtrend" // Bearish CHoCH
+
+if trend_state == "Downtrend"
+    if is_higher_high
+        trend_state := "Uptrend" // Bullish CHoCH
+
+
+// Set color based on the persistent trend state
+color trend_color = trend_state == "Uptrend" ? color.new(color.green, 75) :
+                  trend_state == "Downtrend" ? color.new(color.red, 75) :
+                  color.new(color.gray, 75)
 
 // Display Trend Status on Chart
 var label trend_label = label.new(
@@ -87,7 +104,7 @@ var label trend_label = label.new(
 
 if barstate.islast
     label.set_xy(trend_label, bar_index + 5, ta.highest(high, 20))
-    label.set_text(trend_label, "Trend: " + trend)
+    label.set_text(trend_label, "Trend: " + trend_state)
     label.set_color(trend_label, trend_color)
     label.set_textcolor(trend_label, color.white)
 
@@ -111,7 +128,7 @@ var array<OrderBlock> ob_array = array.new<OrderBlock>()
 if is_lower_low
     int swing_high_bar = last_ph_bar
     int ob_bar_index = swing_high_bar
-    for i = 0 to 5
+    for i = 0 to i_ob_lookback
         if close[swing_high_bar - i] > open[swing_high_bar - i]
             ob_bar_index := swing_high_bar - i
             break
@@ -124,7 +141,7 @@ if is_lower_low
 if is_higher_high
     int swing_low_bar = last_pl_bar
     int ob_bar_index = swing_low_bar
-    for i = 0 to 5
+    for i = 0 to i_ob_lookback
         if close[swing_low_bar - i] < open[swing_low_bar - i]
             ob_bar_index := swing_low_bar - i
             break
@@ -165,36 +182,33 @@ if low[2] > high[0]
 // Section 5: Zone Mitigation & Drawing Management
 // =====================================================================================
 
-// On every bar, check if any active zones have been mitigated
+// On every bar, iterate through the arrays to manage zones
 if array.size(ob_array) > 0
     for i = 0 to array.size(ob_array) - 1
         ob = array.get(ob_array, i)
+
+        // 1. Check for Mitigation
         if not ob.mitigated and high >= ob.bottom_price and low <= ob.top_price
-            // This OB is now mitigated
             ob.mitigated := true
             box.set_bgcolor(ob.ob_box, ob.is_bullish ? color.new(color.green, 90) : color.new(color.red, 90))
             box.set_border_style(ob.ob_box, line.style_dashed)
             box.set_border_color(ob.ob_box, ob.is_bullish ? color.green : color.red)
 
-if array.size(fvg_array) > 0
-    for i = 0 to array.size(fvg_array) - 1
-        fvg = array.get(fvg_array, i)
-        if not fvg.mitigated and high >= fvg.bottom_price and low <= fvg.top_price
-            // This FVG is now mitigated
-            fvg.mitigated := true
-            box.set_bgcolor(fvg.fvg_box, fvg.is_bullish ? color.new(color.blue, 90) : color.new(color.orange, 90))
-            box.set_border_style(fvg.fvg_box, line.style_dashed)
-            box.set_border_color(fvg.fvg_box, fvg.is_bullish ? color.blue : color.orange)
-
-// Extend boxes to the right on each new bar
-if array.size(ob_array) > 0
-    for i = 0 to array.size(ob_array) - 1
-        ob = array.get(ob_array, i)
+        // 2. Extend the box to the right
         box.set_right(ob.ob_box, bar_index + 20)
 
 if array.size(fvg_array) > 0
     for i = 0 to array.size(fvg_array) - 1
         fvg = array.get(fvg_array, i)
+
+        // 1. Check for Mitigation
+        if not fvg.mitigated and high >= fvg.bottom_price and low <= fvg.top_price
+            fvg.mitigated := true
+            box.set_bgcolor(fvg.fvg_box, fvg.is_bullish ? color.new(color.blue, 90) : color.new(color.orange, 90))
+            box.set_border_style(fvg.fvg_box, line.style_dashed)
+            box.set_border_color(fvg.fvg_box, fvg.is_bullish ? color.blue : color.orange)
+
+        // 2. Extend the box to the right
         box.set_right(fvg.fvg_box, bar_index + 20)
 
 // --- History Management ---
