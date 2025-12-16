@@ -30,8 +30,8 @@ float ph = ta.pivothigh(high, i_swing_lookback_left, i_swing_lookback_right)
 float pl = ta.pivotlow(low, i_swing_lookback_left, i_swing_lookback_right)
 
 // Plotting for verification, controlled by input
-plot(i_show_pivots ? ph : na, title="Pivot High", color=color.new(color.red, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
-plot(i_show_pivots ? pl : na, title="Pivot Low", color=color.new(color.blue, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
+plot(series=i_show_pivots ? ph : na, title="Pivot High", color=color.new(color.red, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
+plot(series=i_show_pivots ? pl : na, title="Pivot Low", color=color.new(color.blue, 50), style=plot.style_circles, linewidth=2, offset=-i_swing_lookback_right)
 
 // =====================================================================================
 // Section 2: Market Structure & Trend Identification
@@ -190,7 +190,7 @@ if array.size(ob_array) > 0
         // 1. Check for Mitigation
         if not ob.mitigated and high >= ob.bottom_price and low <= ob.top_price
             ob.mitigated := true
-            box.set_bgcolor(ob.ob_box, ob.is_bullish ? color.new(color.green, 90) : color.new(color.red, 90))
+            box.set_bgcolor(ob.ob_box, ob.is_bullish ? color.new(color.green, 95) : color.new(color.red, 95))
             box.set_border_style(ob.ob_box, line.style_dashed)
             box.set_border_color(ob.ob_box, ob.is_bullish ? color.green : color.red)
 
@@ -204,7 +204,7 @@ if array.size(fvg_array) > 0
         // 1. Check for Mitigation
         if not fvg.mitigated and high >= fvg.bottom_price and low <= fvg.top_price
             fvg.mitigated := true
-            box.set_bgcolor(fvg.fvg_box, fvg.is_bullish ? color.new(color.blue, 90) : color.new(color.orange, 90))
+            box.set_bgcolor(fvg.fvg_box, fvg.is_bullish ? color.new(color.blue, 95) : color.new(color.orange, 95))
             box.set_border_style(fvg.fvg_box, line.style_dashed)
             box.set_border_color(fvg.fvg_box, fvg.is_bullish ? color.blue : color.orange)
 
