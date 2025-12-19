@@ -105,26 +105,50 @@ document.addEventListener('DOMContentLoaded', () => {
         priceChart.update('none');
         rsiChart.update('none');
 
-        // Update history panel
+        // Update trade panels
+        updateOpenTrades(symbol, data.open_trades);
         updateHistory(symbol, data.history);
+    }
+
+    function updateOpenTrades(symbol, open_trades) {
+        const openTradesLog = document.getElementById(`${symbol}-open-trades`);
+        openTradesLog.innerHTML = '<h3>Open Trades</h3>';
+        if (open_trades.length === 0) {
+            openTradesLog.innerHTML += '<p>No open trades.</p>';
+            return;
+        }
+        open_trades.forEach(trade => {
+            const p = document.createElement('p');
+            p.textContent = `${trade.open_time} - ${trade.type} @ ${trade.open_price.toFixed(2)} (SL: ${trade.sl.toFixed(2)}, TP: ${trade.tp.toFixed(2)})`;
+            openTradesLog.appendChild(p);
+        });
     }
 
     function updateHistory(symbol, history) {
         const historyLog = document.getElementById(`${symbol}-history`);
-        historyLog.innerHTML = ''; // Clear previous entries
+        historyLog.innerHTML = '<h3>Trade History</h3>'; // Clear previous entries
 
-        // reverse the history to show the latest first
+        if (history.length === 0) {
+            historyLog.innerHTML += '<p>No trade history.</p>';
+            return;
+        }
+
         [...history].reverse().forEach(trade => {
             const p = document.createElement('p');
-            let tradeText = `${trade.open_time} - ${trade.type} @ ${trade.open_price.toFixed(2)}`;
-            if (trade.status === 'CLOSED') {
-                const profit = trade.close_price - trade.open_price;
-                const profitClass = trade.type === 'BUY' ? (profit > 0 ? 'profit' : 'loss') : (profit < 0 ? 'profit' : 'loss');
-                tradeText += ` → CLOSED @ ${trade.close_price.toFixed(2)}`;
+            let profit = 0;
+            if (trade.type === 'BUY') {
+                profit = trade.close_price - trade.open_price;
             } else {
-                tradeText += ' (OPEN)';
+                profit = trade.open_price - trade.close_price;
             }
-            p.textContent = tradeText;
+            const profitClass = profit >= 0 ? 'profit' : 'loss';
+
+            p.innerHTML = `
+                ${trade.close_time} - ${trade.type} @ ${trade.open_price.toFixed(2)}
+                → Closed @ ${trade.close_price.toFixed(2)}
+                <span class="${profitClass}">(${profit.toFixed(2)})</span>
+                - <i>${trade.status}</i>
+            `;
             historyLog.appendChild(p);
         });
     }
