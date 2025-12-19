@@ -1,0 +1,7 @@
+# Log files
+backend.log
+
+# Python cache
+backend/__pycache__/
+__pycache__/
+*.pyc
