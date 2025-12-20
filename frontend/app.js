@@ -83,51 +83,77 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(`${symbol}-price`).textContent = `$${data.price.toFixed(2)}`;
 
         // Check for new signal to send notification
-        if (data.signal !== previousSignals[symbol] && (data.signal === 'BUY_HOLD' || data.signal === 'SELL_HOLD')) {
+        if (data.signal !== previousSignals[symbol] && (data.signal === 'BUY' || data.signal === 'SELL')) {
             sendNotification(`${symbol.toUpperCase()} Signal`, `New signal: ${data.signal}`);
         }
         previousSignals[symbol] = data.signal;
 
-        // Update charts
+        // Update charts if data is available
+        if (data.chart_data && data.chart_data.length > 0) {
+            updateCharts(symbol, data.chart_data);
+        }
+
+        // Update trade panels
+        if (data.trades) {
+            updateTradesPanel(symbol, data.trades);
+        }
+    }
+
+    function updateCharts(symbol, chart_data) {
         const priceChart = charts[symbol].priceChart;
         const rsiChart = charts[symbol].rsiChart;
-
-        const chartLabels = data.chart_data.map(d => new Date(d.time));
+        const chartLabels = chart_data.map(d => new Date(d.time));
 
         priceChart.data.labels = chartLabels;
-        priceChart.data.datasets[0].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), o: d.open, h: d.high, l: d.low, c: d.close }));
-        priceChart.data.datasets[1].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.EMA_9 }));
-        priceChart.data.datasets[2].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.EMA_21 }));
+        priceChart.data.datasets[0].data = chart_data.map(d => ({ x: new Date(d.time).valueOf(), o: d.open, h: d.high, l: d.low, c: d.close }));
+        priceChart.data.datasets[1].data = chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.EMA_9 }));
+        priceChart.data.datasets[2].data = chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.EMA_21 }));
 
         rsiChart.data.labels = chartLabels;
-        rsiChart.data.datasets[0].data = data.chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.RSI_14 }));
+        rsiChart.data.datasets[0].data = chart_data.map(d => ({ x: new Date(d.time).valueOf(), y: d.RSI_14 }));
 
         priceChart.update('none');
         rsiChart.update('none');
-
-        // Update history panel
-        updateHistory(symbol, data.history);
     }
 
-    function updateHistory(symbol, history) {
-        const historyLog = document.getElementById(`${symbol}-history`);
-        historyLog.innerHTML = ''; // Clear previous entries
+    function updateTradesPanel(symbol, trades) {
+        const openTradesList = document.querySelector(`#${symbol}-open-trades .trade-list`);
+        const historyList = document.querySelector(`#${symbol}-history .trade-list`);
+        openTradesList.innerHTML = '';
+        historyList.innerHTML = '';
 
-        // reverse the history to show the latest first
-        [...history].reverse().forEach(trade => {
-            const p = document.createElement('p');
-            let tradeText = `${trade.open_time} - ${trade.type} @ ${trade.open_price.toFixed(2)}`;
-            if (trade.status === 'CLOSED') {
-                const profit = trade.close_price - trade.open_price;
-                const profitClass = trade.type === 'BUY' ? (profit > 0 ? 'profit' : 'loss') : (profit < 0 ? 'profit' : 'loss');
-                tradeText += ` → CLOSED @ ${trade.close_price.toFixed(2)}`;
-            } else {
-                tradeText += ' (OPEN)';
-            }
-            p.textContent = tradeText;
-            historyLog.appendChild(p);
-        });
+        // Update Open Trades
+        if (trades.open && trades.open.length > 0) {
+            trades.open.forEach(trade => {
+                const p = document.createElement('p');
+                p.innerHTML = `
+                    <strong>${trade.type}</strong> @ ${trade.open_price.toFixed(2)}
+                    <small>(SL: ${trade.sl.toFixed(2)}, TP: ${trade.tp.toFixed(2)})</small>
+                `;
+                openTradesList.appendChild(p);
+            });
+        } else {
+            openTradesList.innerHTML = '<p>No open trades.</p>';
+        }
+
+        // Update Trade History
+        if (trades.history && trades.history.length > 0) {
+            trades.history.forEach(trade => {
+                const p = document.createElement('p');
+                const profit = (trade.close_price - trade.open_price) * (trade.type === 'BUY' ? 1 : -1);
+                const profitClass = profit >= 0 ? 'profit' : 'loss';
+                p.innerHTML = `
+                    <strong>${trade.type}</strong> from ${trade.open_price.toFixed(2)} to ${trade.close_price.toFixed(2)}
+                    <span class="${profitClass}">(${profit.toFixed(2)})</span>
+                    <small>Closed: ${trade.close_reason || 'Signal'}</small>
+                `;
+                historyList.appendChild(p);
+            });
+        } else {
+            historyList.innerHTML = '<p>No trade history.</p>';
+        }
     }
+
 
     // --- Notifications ---
     function sendNotification(title, body) {
@@ -138,5 +164,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Initial Load and Interval ---
     updateData(); // Initial call
-    setInterval(updateData, 10000); // Update every 10 seconds
+    setInterval(updateData, 5000); // Update every 5 seconds
 });

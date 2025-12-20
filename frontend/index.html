@@ -9,6 +9,7 @@
 <body>
     <h1>MT5 Trading Signal Dashboard</h1>
     <div class="container">
+        <!-- Gold Panel -->
         <div class="instrument-panel">
             <h2>GOLD (XAU/USD)</h2>
             <div class="signal-box">
@@ -21,11 +22,16 @@
             <div class="chart-container-rsi">
                 <canvas id="gold-rsi-chart"></canvas>
             </div>
-            <div class="history-panel">
-                <h3>Signal History</h3>
-                <div id="gold-history" class="history-log"></div>
+            <div id="gold-open-trades" class="trades-panel history-log">
+                <h3>Open Trades</h3>
+                <div class="trade-list"></div>
+            </div>
+            <div id="gold-history" class="trades-panel history-log">
+                <h3>Trade History</h3>
+                <div class="trade-list"></div>
             </div>
         </div>
+        <!-- BTC/USD Panel -->
         <div class="instrument-panel">
             <h2>BITCOIN (BTC/USD)</h2>
             <div class="signal-box">
@@ -38,9 +44,13 @@
             <div class="chart-container-rsi">
                 <canvas id="btcusd-rsi-chart"></canvas>
             </div>
-            <div class="history-panel">
-                <h3>Signal History</h3>
-                <div id="btcusd-history" class="history-log"></div>
+            <div id="btcusd-open-trades" class="trades-panel history-log">
+                <h3>Open Trades</h3>
+                <div class="trade-list"></div>
+            </div>
+            <div id="btcusd-history" class="trades-panel history-log">
+                <h3>Trade History</h3>
+                <div class="trade-list"></div>
             </div>
         </div>
     </div>
