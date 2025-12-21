@@ -83,7 +83,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(`${symbol}-price`).textContent = `$${data.price.toFixed(2)}`;
 
         // Check for new signal to send notification
-        if (data.signal !== previousSignals[symbol] && (data.signal === 'BUY_HOLD' || data.signal === 'SELL_HOLD')) {
+        if (data.signal !== previousSignals[symbol] && (data.signal === 'BUY' || data.signal === 'SELL')) {
             sendNotification(`${symbol.toUpperCase()} Signal`, `New signal: ${data.signal}`);
         }
         previousSignals[symbol] = data.signal;
@@ -91,7 +91,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // Update charts
         const priceChart = charts[symbol].priceChart;
         const rsiChart = charts[symbol].rsiChart;
-
         const chartLabels = data.chart_data.map(d => new Date(d.time));
 
         priceChart.data.labels = chartLabels;
@@ -105,26 +104,60 @@ document.addEventListener('DOMContentLoaded', () => {
         priceChart.update('none');
         rsiChart.update('none');
 
-        // Update history panel
+        // --- Update trade panels ---
+        updateOpenTrades(symbol, data.open_trades, data.price);
         updateHistory(symbol, data.history);
+    }
+
+    function updateOpenTrades(symbol, open_trades, current_price) {
+        const openTradesLog = document.getElementById(`${symbol}-open-trades`);
+        openTradesLog.innerHTML = '';
+
+        if (!open_trades || open_trades.length === 0) {
+            openTradesLog.innerHTML = '<p>No open trades.</p>';
+            return;
+        }
+
+        open_trades.forEach(trade => {
+            const p = document.createElement('p');
+
+            // Calculate current PnL
+            let pnl = (current_price - trade.entry_price) * (trade.type === 'BUY' ? 1 : -1);
+            // This is a simplified PnL, matching the backend's simplified calculation
+            pnl *= (trade.lot_size * 100);
+
+            const pnlClass = pnl >= 0 ? 'profit' : 'loss';
+
+            p.innerHTML = `
+                <strong>${trade.type}</strong> @ ${trade.entry_price.toFixed(2)} |
+                SL: ${trade.sl.toFixed(2)} |
+                TP: ${trade.tp.toFixed(2)} |
+                PnL: <span class="${pnlClass}">${pnl.toFixed(2)}</span>
+            `;
+            openTradesLog.appendChild(p);
+        });
     }
 
     function updateHistory(symbol, history) {
         const historyLog = document.getElementById(`${symbol}-history`);
-        historyLog.innerHTML = ''; // Clear previous entries
+        historyLog.innerHTML = '';
+
+        if (history.length === 0) {
+            historyLog.innerHTML = '<p>No trade history yet.</p>';
+            return;
+        }
 
         // reverse the history to show the latest first
         [...history].reverse().forEach(trade => {
             const p = document.createElement('p');
-            let tradeText = `${trade.open_time} - ${trade.type} @ ${trade.open_price.toFixed(2)}`;
-            if (trade.status === 'CLOSED') {
-                const profit = trade.close_price - trade.open_price;
-                const profitClass = trade.type === 'BUY' ? (profit > 0 ? 'profit' : 'loss') : (profit < 0 ? 'profit' : 'loss');
-                tradeText += ` → CLOSED @ ${trade.close_price.toFixed(2)}`;
-            } else {
-                tradeText += ' (OPEN)';
-            }
-            p.textContent = tradeText;
+            const pnlClass = trade.pnl >= 0 ? 'profit' : 'loss';
+
+            p.innerHTML = `
+                ${trade.close_time} - <strong>${trade.type}</strong> |
+                Entry: ${trade.entry_price.toFixed(2)} |
+                Close: ${trade.close_price.toFixed(2)} |
+                PnL: <span class="${pnlClass}">${trade.pnl.toFixed(2)}</span>
+            `;
             historyLog.appendChild(p);
         });
     }
@@ -137,6 +170,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Initial Load and Interval ---
-    updateData(); // Initial call
-    setInterval(updateData, 10000); // Update every 10 seconds
+    updateData();
+    setInterval(updateData, 5000); // Update every 5 seconds
 });
