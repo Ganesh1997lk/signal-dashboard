@@ -3,7 +3,7 @@ import random
 import time
 from flask import Flask, jsonify, send_from_directory
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np
 
 # --- Configuration ---
@@ -80,8 +80,9 @@ def generate_signal(df, symbol):
     is_sell_condition = latest['EMA_9'] < latest['EMA_21'] and latest['RSI_14'] < 48 and latest['RSI_14'] > 30
 
     new_signal = current_state
-    timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 
+    # Case 1: Waiting for a signal
     if current_state == 'WAITING':
         if is_buy_condition:
             new_signal = 'BUY_HOLD'
@@ -89,18 +90,49 @@ def generate_signal(df, symbol):
         elif is_sell_condition:
             new_signal = 'SELL_HOLD'
             state_info['history'].append({'type': 'SELL', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN'})
-    elif current_state == 'BUY_HOLD' and not is_buy_condition:
-        new_signal = 'WAITING'
-        if state_info['history'] and state_info['history'][-1]['status'] == 'OPEN':
-            state_info['history'][-1].update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp})
-    elif current_state == 'SELL_HOLD' and not is_sell_condition:
-        new_signal = 'WAITING'
-        if state_info['history'] and state_info['history'][-1]['status'] == 'OPEN':
-            state_info['history'][-1].update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp})
+
+    # Case 2: In a BUY trade
+    elif current_state == 'BUY_HOLD':
+        # Hedging: If a SELL signal appears, close BUY and open SELL.
+        if is_sell_condition:
+            new_signal = 'SELL_HOLD'
+            # Close all open BUY trades
+            for trade in state_info['history']:
+                if trade['type'] == 'BUY' and trade['status'] == 'OPEN':
+                    trade.update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp, 'reason': 'Hedged'})
+            # Open new SELL trade
+            state_info['history'].append({'type': 'SELL', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN'})
+        # Exit condition: If BUY condition is no longer true (and no SELL signal)
+        elif not is_buy_condition:
+            new_signal = 'WAITING'
+            for trade in state_info['history']:
+                 if trade['type'] == 'BUY' and trade['status'] == 'OPEN':
+                    trade.update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp, 'reason': 'Condition False'})
+
+    # Case 3: In a SELL trade
+    elif current_state == 'SELL_HOLD':
+        # Hedging: If a BUY signal appears, close SELL and open BUY.
+        if is_buy_condition:
+            new_signal = 'BUY_HOLD'
+            # Close all open SELL trades
+            for trade in state_info['history']:
+                if trade['type'] == 'SELL' and trade['status'] == 'OPEN':
+                    trade.update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp, 'reason': 'Hedged'})
+            # Open new BUY trade
+            state_info['history'].append({'type': 'BUY', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN'})
+        # Exit condition: If SELL condition is no longer true (and no BUY signal)
+        elif not is_sell_condition:
+            new_signal = 'WAITING'
+            for trade in state_info['history']:
+                if trade['type'] == 'SELL' and trade['status'] == 'OPEN':
+                    trade.update({'status': 'CLOSED', 'close_price': price, 'close_time': timestamp, 'reason': 'Condition False'})
 
     state_info['state'] = new_signal
     if len(state_info['history']) > 10:
-        state_info['history'].pop(0)
+        # Prune history by removing the oldest closed trades
+        open_trades = [t for t in state_info['history'] if t['status'] == 'OPEN']
+        closed_trades = [t for t in state_info['history'] if t['status'] != 'OPEN']
+        state_info['history'] = open_trades + closed_trades[-9:] # Keep open trades and 9 most recent closed
 
     return new_signal, df
 

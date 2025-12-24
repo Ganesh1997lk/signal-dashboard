@@ -121,6 +121,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const profit = trade.close_price - trade.open_price;
                 const profitClass = trade.type === 'BUY' ? (profit > 0 ? 'profit' : 'loss') : (profit < 0 ? 'profit' : 'loss');
                 tradeText += ` → CLOSED @ ${trade.close_price.toFixed(2)}`;
+                if (trade.reason) {
+                    tradeText += ` (${trade.reason})`;
+                }
             } else {
                 tradeText += ' (OPEN)';
             }
