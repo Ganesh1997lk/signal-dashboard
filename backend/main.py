@@ -3,7 +3,7 @@ import random
 import time
 from flask import Flask, jsonify, send_from_directory
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np
 
 # --- Configuration ---
@@ -61,6 +61,18 @@ def create_simulated_data(symbol):
     return df
 
 # --- Signal Generation ---
+def close_all_trades_by_type(symbol, trade_type_to_close, close_price):
+    """Closes all open trades of a specific type for a given symbol."""
+    state_info = signal_states[symbol]
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    for trade in state_info['history']:
+        if trade['status'] == 'OPEN' and trade['type'] == trade_type_to_close:
+            trade.update({
+                'status': 'CLOSED',
+                'close_price': close_price,
+                'close_time': timestamp
+            })
+
 def generate_signal(df, symbol):
     state_info = signal_states[symbol]
     current_state = state_info['state']
@@ -80,13 +92,15 @@ def generate_signal(df, symbol):
     is_sell_condition = latest['EMA_9'] < latest['EMA_21'] and latest['RSI_14'] < 48 and latest['RSI_14'] > 30
 
     new_signal = current_state
-    timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 
     if current_state == 'WAITING':
         if is_buy_condition:
+            close_all_trades_by_type(symbol, 'SELL', price)
             new_signal = 'BUY_HOLD'
             state_info['history'].append({'type': 'BUY', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN'})
         elif is_sell_condition:
+            close_all_trades_by_type(symbol, 'BUY', price)
             new_signal = 'SELL_HOLD'
             state_info['history'].append({'type': 'SELL', 'open_price': price, 'open_time': timestamp, 'status': 'OPEN'})
     elif current_state == 'BUY_HOLD' and not is_buy_condition:
