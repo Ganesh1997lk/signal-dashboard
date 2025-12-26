@@ -7,6 +7,7 @@
 #property link      "https://www.mql5.com"
 #property version   "1.00"
 #property indicator_chart_window
+#property indicator_plots 0
 
 //--- Inputs for Daily High/Low
 input group "Daily"
@@ -39,16 +40,20 @@ double monthlyHigh, monthlyLow;
 double yearlyHigh, yearlyLow;
 
 //--- Global variables to track alerted levels
-double lastAlertedDailyHigh, lastAlertedDailyLow = 1000000;
-double lastAlertedWeeklyHigh, lastAlertedWeeklyLow = 1000000;
-double lastAlertedMonthlyHigh, lastAlertedMonthlyLow = 1000000;
-double lastAlertedYearlyHigh, lastAlertedYearlyLow = 1000000;
+double lastAlertedDailyHigh    = 0;
+double lastAlertedDailyLow     = 1000000;
+double lastAlertedWeeklyHigh   = 0;
+double lastAlertedWeeklyLow    = 1000000;
+double lastAlertedMonthlyHigh  = 0;
+double lastAlertedMonthlyLow   = 1000000;
+double lastAlertedYearlyHigh   = 0;
+double lastAlertedYearlyLow    = 1000000;
 
 
 //--- Variables to track the current period
 int currentDay = -1;
-int currentWeek = -1;
 int currentMonth = -1;
+int lastDayOfWeek = 7;
 int currentYear = -1;
 
 //+------------------------------------------------------------------+
@@ -89,40 +94,39 @@ int OnCalculate(const int rates_total,
       if(dt.day_of_year != currentDay || dt.year != currentYear)
         {
          currentDay = dt.day_of_year;
-         dailyHigh = 0;
-         dailyLow = 1000000; // A high value to start with
-         lastAlertedDailyHigh = 0;
-         lastAlertedDailyLow = 1000000;
+         dailyHigh = high[i];
+         dailyLow = low[i];
+         lastAlertedDailyHigh = high[i];
+         lastAlertedDailyLow = low[i];
         }
 
-      //--- Check for new week
-      if(dt.week_of_year != currentWeek || dt.year != currentYear)
+      //--- Check for new week (when day of week resets, e.g., Sat -> Sun)
+      if(dt.day_of_week < lastDayOfWeek || dt.year != currentYear)
         {
-         currentWeek = dt.week_of_year;
-         weeklyHigh = 0;
-         weeklyLow = 1000000;
-         lastAlertedWeeklyHigh = 0;
-         lastAlertedWeeklyLow = 1000000;
+         weeklyHigh = high[i];
+         weeklyLow = low[i];
+         lastAlertedWeeklyHigh = high[i];
+         lastAlertedWeeklyLow = low[i];
         }
 
       //--- Check for new month
       if(dt.mon != currentMonth || dt.year != currentYear)
         {
          currentMonth = dt.mon;
-         monthlyHigh = 0;
-         monthlyLow = 1000000;
-         lastAlertedMonthlyHigh = 0;
-         lastAlertedMonthlyLow = 1000000;
+         monthlyHigh = high[i];
+         monthlyLow = low[i];
+         lastAlertedMonthlyHigh = high[i];
+         lastAlertedMonthlyLow = low[i];
         }
 
       //--- Check for new year
       if(dt.year != currentYear)
         {
          currentYear = dt.year;
-         yearlyHigh = 0;
-         yearlyLow = 1000000;
-         lastAlertedYearlyHigh = 0;
-         lastAlertedYearlyLow = 1000000;
+         yearlyHigh = high[i];
+         yearlyLow = low[i];
+         lastAlertedYearlyHigh = high[i];
+         lastAlertedYearlyLow = low[i];
         }
 
       //--- Update Highs and Lows
@@ -141,18 +145,21 @@ int OnCalculate(const int rates_total,
       //--- Check for alerts only on the most recent bar
       if(i == rates_total - 1)
         {
-         if(DailyAlerts && dailyHigh > lastAlertedDailyHigh) { Alert("New Daily High: ", DoubleToString(dailyHigh, _Digits)); lastAlertedDailyHigh = dailyHigh; }
-         if(DailyAlerts && dailyLow < lastAlertedDailyLow) { Alert("New Daily Low: ", DoubleToString(dailyLow, _Digits)); lastAlertedDailyLow = dailyLow; }
+         if(DailyAlerts && dailyHigh > lastAlertedDailyHigh) { Alert("New Daily High: " + DoubleToString(dailyHigh, _Digits)); lastAlertedDailyHigh = dailyHigh; }
+         if(DailyAlerts && dailyLow < lastAlertedDailyLow) { Alert("New Daily Low: " + DoubleToString(dailyLow, _Digits)); lastAlertedDailyLow = dailyLow; }
 
-         if(WeeklyAlerts && weeklyHigh > lastAlertedWeeklyHigh) { Alert("New Weekly High: ", DoubleToString(weeklyHigh, _Digits)); lastAlertedWeeklyHigh = weeklyHigh; }
-         if(WeeklyAlerts && weeklyLow < lastAlertedWeeklyLow) { Alert("New Weekly Low: ", DoubleToString(weeklyLow, _Digits)); lastAlertedWeeklyLow = weeklyLow; }
+         if(WeeklyAlerts && weeklyHigh > lastAlertedWeeklyHigh) { Alert("New Weekly High: " + DoubleToString(weeklyHigh, _Digits)); lastAlertedWeeklyHigh = weeklyHigh; }
+         if(WeeklyAlerts && weeklyLow < lastAlertedWeeklyLow) { Alert("New Weekly Low: " + DoubleToString(weeklyLow, _Digits)); lastAlertedWeeklyLow = weeklyLow; }
 
-         if(MonthlyAlerts && monthlyHigh > lastAlertedMonthlyHigh) { Alert("New Monthly High: ", DoubleToString(monthlyHigh, _Digits)); lastAlertedMonthlyHigh = monthlyHigh; }
-         if(MonthlyAlerts && monthlyLow < lastAlertedMonthlyLow) { Alert("New Monthly Low: ", DoubleToString(monthlyLow, _Digits)); lastAlertedMonthlyLow = monthlyLow; }
+         if(MonthlyAlerts && monthlyHigh > lastAlertedMonthlyHigh) { Alert("New Monthly High: " + DoubleToString(monthlyHigh, _Digits)); lastAlertedMonthlyHigh = monthlyHigh; }
+         if(MonthlyAlerts && monthlyLow < lastAlertedMonthlyLow) { Alert("New Monthly Low: " + DoubleToString(monthlyLow, _Digits)); lastAlertedMonthlyLow = monthlyLow; }
 
-         if(YearlyAlerts && yearlyHigh > lastAlertedYearlyHigh) { Alert("New Yearly High: ", DoubleToString(yearlyHigh, _Digits)); lastAlertedYearlyHigh = yearlyHigh; }
-         if(YearlyAlerts && yearlyLow < lastAlertedYearlyLow) { Alert("New Yearly Low: ", DoubleToString(yearlyLow, _Digits)); lastAlertedYearlyLow = yearlyLow; }
+         if(YearlyAlerts && yearlyHigh > lastAlertedYearlyHigh) { Alert("New Yearly High: " + DoubleToString(yearlyHigh, _Digits)); lastAlertedYearlyHigh = yearlyHigh; }
+         if(YearlyAlerts && yearlyLow < lastAlertedYearlyLow) { Alert("New Yearly Low: " + DoubleToString(yearlyLow, _Digits)); lastAlertedYearlyLow = yearlyLow; }
         }
+
+      //--- Update the last day of the week for the next iteration
+      lastDayOfWeek = dt.day_of_week;
      }
 //---
 
@@ -212,13 +219,13 @@ void DrawLines()
 void OnDeinit(const int reason)
   {
    string chartID = IntegerToString(ChartID());
-   ObjectsDeleteAll(0, "DH_"+chartID);
-   ObjectsDeleteAll(0, "DL_"+chartID);
-   ObjectsDeleteAll(0, "WH_"+chartID);
-   ObjectsDeleteAll(0, "WL_"+chartID);
-   ObjectsDeleteAll(0, "MH_"+chartID);
-   ObjectsDeleteAll(0, "ML_"+chartID);
-   ObjectsDeleteAll(0, "YH_"+chartID);
-   ObjectsDeleteAll(0, "YL_"+chartID);
+   ObjectDelete(0, "DH_"+chartID);
+   ObjectDelete(0, "DL_"+chartID);
+   ObjectDelete(0, "WH_"+chartID);
+   ObjectDelete(0, "WL_"+chartID);
+   ObjectDelete(0, "MH_"+chartID);
+   ObjectDelete(0, "ML_"+chartID);
+   ObjectDelete(0, "YH_"+chartID);
+   ObjectDelete(0, "YL_"+chartID);
   }
 //+------------------------------------------------------------------+
