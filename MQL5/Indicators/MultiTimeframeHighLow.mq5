@@ -49,6 +49,12 @@ double lastAlertedMonthlyLow   = 1000000;
 double lastAlertedYearlyHigh   = 0;
 double lastAlertedYearlyLow    = 1000000;
 
+//--- Global variables to track the bar index of highs/lows
+int dailyHighBar, dailyLowBar;
+int weeklyHighBar, weeklyLowBar;
+int monthlyHighBar, monthlyLowBar;
+int yearlyHighBar, yearlyLowBar;
+
 
 //--- Variables to track the current period
 int currentDay = -1;
@@ -130,17 +136,17 @@ int OnCalculate(const int rates_total,
         }
 
       //--- Update Highs and Lows
-      if (high[i] > dailyHigh) dailyHigh = high[i];
-      if (low[i] < dailyLow) dailyLow = low[i];
+      if (high[i] > dailyHigh) { dailyHigh = high[i]; dailyHighBar = i; }
+      if (low[i] < dailyLow) { dailyLow = low[i]; dailyLowBar = i; }
 
-      if (high[i] > weeklyHigh) weeklyHigh = high[i];
-      if (low[i] < weeklyLow) weeklyLow = low[i];
+      if (high[i] > weeklyHigh) { weeklyHigh = high[i]; weeklyHighBar = i; }
+      if (low[i] < weeklyLow) { weeklyLow = low[i]; weeklyLowBar = i; }
 
-      if (high[i] > monthlyHigh) monthlyHigh = high[i];
-      if (low[i] < monthlyLow) monthlyLow = low[i];
+      if (high[i] > monthlyHigh) { monthlyHigh = high[i]; monthlyHighBar = i; }
+      if (low[i] < monthlyLow) { monthlyLow = low[i]; monthlyLowBar = i; }
 
-      if (high[i] > yearlyHigh) yearlyHigh = high[i];
-      if (low[i] < yearlyLow) yearlyLow = low[i];
+      if (high[i] > yearlyHigh) { yearlyHigh = high[i]; yearlyHighBar = i; }
+      if (low[i] < yearlyLow) { yearlyLow = low[i]; yearlyLowBar = i; }
 
       //--- Check for alerts only on the most recent bar
       if(i == rates_total - 1)
@@ -167,14 +173,15 @@ int OnCalculate(const int rates_total,
    //--- Draw the lines on the last bar
    if(rates_total > 0)
      {
-      DrawLines();
+      DrawLines(time, rates_total);
+      DrawAllMarkers(time);
      }
    return(rates_total);
   }
 //+------------------------------------------------------------------+
-//| Helper function to draw horizontal lines                         |
+//| Helper function to draw short trend lines ("cross style")        |
 //+------------------------------------------------------------------+
-void DrawLine(string name, double price, color clr, bool show)
+void DrawShortLine(string name, double price, color clr, bool show, const datetime &time[], int rates_total)
   {
    if(!show)
      {
@@ -182,9 +189,15 @@ void DrawLine(string name, double price, color clr, bool show)
       return;
      }
 
+   // Draw a short line from 10 bars ago to the current bar
+   int startIndex = (rates_total > 10) ? rates_total - 10 : 0;
+   datetime startTime = time[startIndex];
+   datetime endTime = time[rates_total - 1];
+
+
    if(ObjectFind(0, name) < 0)
      {
-      ObjectCreate(0, name, OBJ_HLINE, 0, 0, price);
+      ObjectCreate(0, name, OBJ_TREND, 0, startTime, price, endTime, price);
       ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
       ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DASH);
       ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
@@ -192,26 +205,91 @@ void DrawLine(string name, double price, color clr, bool show)
      }
    else
      {
-      ObjectMove(0, name, 0, 0, price);
+      ObjectMove(0, name, 0, startTime, price);
+      ObjectMove(0, name, 1, endTime, price);
      }
   }
 //+------------------------------------------------------------------+
 //| Function to draw all lines based on settings                     |
 //+------------------------------------------------------------------+
-void DrawLines()
+void DrawLines(const datetime &time[], int rates_total)
   {
    string chartID = IntegerToString(ChartID());
-   DrawLine("DH_"+chartID, dailyHigh, DailyColor, ShowDaily);
-   DrawLine("DL_"+chartID, dailyLow, DailyColor, ShowDaily);
+   DrawShortLine("DH_"+chartID, dailyHigh, DailyColor, ShowDaily, time, rates_total);
+   DrawShortLine("DL_"+chartID, dailyLow, DailyColor, ShowDaily, time, rates_total);
 
-   DrawLine("WH_"+chartID, weeklyHigh, WeeklyColor, ShowWeekly);
-   DrawLine("WL_"+chartID, weeklyLow, WeeklyColor, ShowWeekly);
+   DrawShortLine("WH_"+chartID, weeklyHigh, WeeklyColor, ShowWeekly, time, rates_total);
+   DrawShortLine("WL_"+chartID, weeklyLow, WeeklyColor, ShowWeekly, time, rates_total);
 
-   DrawLine("MH_"+chartID, monthlyHigh, MonthlyColor, ShowMonthly);
-   DrawLine("ML_"+chartID, monthlyLow, MonthlyColor, ShowMonthly);
+   DrawShortLine("MH_"+chartID, monthlyHigh, MonthlyColor, ShowMonthly, time, rates_total);
+   DrawShortLine("ML_"+chartID, monthlyLow, MonthlyColor, ShowMonthly, time, rates_total);
 
-   DrawLine("YH_"+chartID, yearlyHigh, YearlyColor, ShowYearly);
-   DrawLine("YL_"+chartID, yearlyLow, YearlyColor, ShowYearly);
+   DrawShortLine("YH_"+chartID, yearlyHigh, YearlyColor, ShowYearly, time, rates_total);
+   DrawShortLine("YL_"+chartID, yearlyLow, YearlyColor, ShowYearly, time, rates_total);
+  }
+//+------------------------------------------------------------------+
+//| Helper function to draw markers and labels                       |
+//+------------------------------------------------------------------+
+void DrawMarkerAndLabel(string name, int barIndex, double price, color clr, string text, ENUM_ARROW_ANCHOR anchor, bool show, const datetime &time[])
+  {
+   if(!show || barIndex <= 0)
+     {
+      ObjectDelete(0, name + "_marker");
+      ObjectDelete(0, name + "_label");
+      return;
+     }
+
+   // Draw the cross marker
+   if(ObjectFind(0, name + "_marker") < 0)
+     {
+      ObjectCreate(0, name + "_marker", OBJ_ARROW, 0, time[barIndex], price);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_ARROWCODE, SYMBOL_CROSS);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_ANCHOR, anchor);
+     }
+   else
+     {
+      ObjectMove(0, name + "_marker", 0, time[barIndex], price);
+     }
+
+   // Draw the text label
+   if(ObjectFind(0, name + "_label") < 0)
+     {
+      ObjectCreate(0, name + "_label", OBJ_TEXT, 0, time[barIndex], price);
+      ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
+      ObjectSetInteger(0, name + "_label", OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, anchor);
+      ObjectSetInteger(0, name + "_label", OBJPROP_XDISTANCE, 10);
+     }
+   else
+     {
+      ObjectMove(0, name + "_label", 0, time[barIndex], price);
+      ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
+     }
+  }
+//+------------------------------------------------------------------+
+//| Function to draw all markers based on settings                   |
+//+------------------------------------------------------------------+
+void DrawAllMarkers(const datetime &time[])
+  {
+   string chartID = IntegerToString(ChartID());
+
+   // Daily
+   DrawMarkerAndLabel("DH_"+chartID, dailyHighBar, dailyHigh, DailyColor, "DH:", ANCHOR_BOTTOM, ShowDaily, time);
+   DrawMarkerAndLabel("DL_"+chartID, dailyLowBar, dailyLow, DailyColor, "DL:", ANCHOR_TOP, ShowDaily, time);
+
+   // Weekly
+   DrawMarkerAndLabel("WH_"+chartID, weeklyHighBar, weeklyHigh, WeeklyColor, "WH:", ANCHOR_BOTTOM, ShowWeekly, time);
+   DrawMarkerAndLabel("WL_"+chartID, weeklyLowBar, weeklyLow, WeeklyColor, "WL:", ANCHOR_TOP, ShowWeekly, time);
+
+   // Monthly
+   DrawMarkerAndLabel("MH_"+chartID, monthlyHighBar, monthlyHigh, MonthlyColor, "MH:", ANCHOR_BOTTOM, ShowMonthly, time);
+   DrawMarkerAndLabel("ML_"+chartID, monthlyLowBar, monthlyLow, MonthlyColor, "ML:", ANCHOR_TOP, ShowMonthly, time);
+
+   // Yearly
+   DrawMarkerAndLabel("YH_"+chartID, yearlyHighBar, yearlyHigh, YearlyColor, "YH:", ANCHOR_BOTTOM, ShowYearly, time);
+   DrawMarkerAndLabel("YL_"+chartID, yearlyLowBar, yearlyLow, YearlyColor, "YL:", ANCHOR_TOP, ShowYearly, time);
   }
 //+------------------------------------------------------------------+
 //| Indicator deinitialization function                              |
@@ -219,13 +297,13 @@ void DrawLines()
 void OnDeinit(const int reason)
   {
    string chartID = IntegerToString(ChartID());
-   ObjectDelete(0, "DH_"+chartID);
-   ObjectDelete(0, "DL_"+chartID);
-   ObjectDelete(0, "WH_"+chartID);
-   ObjectDelete(0, "WL_"+chartID);
-   ObjectDelete(0, "MH_"+chartID);
-   ObjectDelete(0, "ML_"+chartID);
-   ObjectDelete(0, "YH_"+chartID);
-   ObjectDelete(0, "YL_"+chartID);
+   string prefixes[] = {"DH_", "DL_", "WH_", "WL_", "MH_", "ML_", "YH_", "YL_"};
+
+   for(int i = 0; i < ArraySize(prefixes); i++)
+     {
+      ObjectDelete(0, prefixes[i] + chartID);
+      ObjectDelete(0, prefixes[i] + chartID + "_marker");
+      ObjectDelete(0, prefixes[i] + chartID + "_label");
+     }
   }
 //+------------------------------------------------------------------+
