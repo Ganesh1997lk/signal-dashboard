@@ -314,9 +314,9 @@ void DrawLines(const datetime &time[], int rates_total)
    DrawShortLine("YL_"+chartID, yearlyLow, YearlyColor, ShowYearly, time, rates_total);
   }
 //+------------------------------------------------------------------+
-//| Helper function to draw markers and labels                       |
+//| Function to draw all markers based on settings                   |
 //+------------------------------------------------------------------+
-void DrawMarkerAndLabel(string name, int barIndex, double price, color clr, string text, ENUM_ARROW_ANCHOR anchor, bool show, const datetime &time[])
+void DrawHighMarkerAndLabel(string name, int barIndex, double price, color clr, string text, bool show, const datetime &time[])
   {
    if(!show || barIndex < 0)
      {
@@ -325,9 +325,6 @@ void DrawMarkerAndLabel(string name, int barIndex, double price, color clr, stri
       return;
      }
 
-   // Define the correct anchor point type for the text label based on the arrow anchor
-   ENUM_ANCHOR_POINT label_anchor = (anchor == ANCHOR_BOTTOM) ? ANCHOR_LEFT_BOTTOM : ANCHOR_LEFT_TOP;
-
    // Draw the cross marker
    if(ObjectFind(0, name + "_marker") < 0)
      {
@@ -335,7 +332,7 @@ void DrawMarkerAndLabel(string name, int barIndex, double price, color clr, stri
       ObjectSetInteger(0, name + "_marker", OBJPROP_ARROWCODE, SYMBOL_CROSS);
       ObjectSetInteger(0, name + "_marker", OBJPROP_COLOR, clr);
       ObjectSetInteger(0, name + "_marker", OBJPROP_WIDTH, 1);
-      ObjectSetInteger(0, name + "_marker", OBJPROP_ANCHOR, anchor);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_ANCHOR, ANCHOR_BOTTOM);
      }
    else
      {
@@ -348,38 +345,74 @@ void DrawMarkerAndLabel(string name, int barIndex, double price, color clr, stri
       ObjectCreate(0, name + "_label", OBJ_TEXT, 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
       ObjectSetInteger(0, name + "_label", OBJPROP_COLOR, clr);
-      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, label_anchor);
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_LEFT_BOTTOM);
       ObjectSetInteger(0, name + "_label", OBJPROP_XDISTANCE, 10);
      }
    else
      {
       ObjectMove(0, name + "_label", 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
-      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, label_anchor);
      }
   }
 //+------------------------------------------------------------------+
-//| Function to draw all markers based on settings                   |
+void DrawLowMarkerAndLabel(string name, int barIndex, double price, color clr, string text, bool show, const datetime &time[])
+  {
+   if(!show || barIndex < 0)
+     {
+      ObjectDelete(0, name + "_marker");
+      ObjectDelete(0, name + "_label");
+      return;
+     }
+
+   // Draw the cross marker
+   if(ObjectFind(0, name + "_marker") < 0)
+     {
+      ObjectCreate(0, name + "_marker", OBJ_ARROW, 0, time[barIndex], price);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_ARROWCODE, SYMBOL_CROSS);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, name + "_marker", OBJPROP_ANCHOR, ANCHOR_TOP);
+     }
+   else
+     {
+      ObjectMove(0, name + "_marker", 0, time[barIndex], price);
+     }
+
+   // Draw the text label
+   if(ObjectFind(0, name + "_label") < 0)
+     {
+      ObjectCreate(0, name + "_label", OBJ_TEXT, 0, time[barIndex], price);
+      ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
+      ObjectSetInteger(0, name + "_label", OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_LEFT_TOP);
+      ObjectSetInteger(0, name + "_label", OBJPROP_XDISTANCE, 10);
+     }
+   else
+     {
+      ObjectMove(0, name + "_label", 0, time[barIndex], price);
+      ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
+     }
+  }
 //+------------------------------------------------------------------+
 void DrawAllMarkers(const datetime &time[])
   {
    string chartID = IntegerToString(ChartID());
 
    // Daily
-   DrawMarkerAndLabel("DH_"+chartID, dailyHighBar, dailyHigh, DailyColor, "DH:", ANCHOR_BOTTOM, ShowDaily, time);
-   DrawMarkerAndLabel("DL_"+chartID, dailyLowBar, dailyLow, DailyColor, "DL:", ANCHOR_TOP, ShowDaily, time);
+   DrawHighMarkerAndLabel("DH_"+chartID, dailyHighBar, dailyHigh, DailyColor, "DH:", ShowDaily, time);
+   DrawLowMarkerAndLabel("DL_"+chartID, dailyLowBar, dailyLow, DailyColor, "DL:", ShowDaily, time);
 
    // Weekly
-   DrawMarkerAndLabel("WH_"+chartID, weeklyHighBar, weeklyHigh, WeeklyColor, "WH:", ANCHOR_BOTTOM, ShowWeekly, time);
-   DrawMarkerAndLabel("WL_"+chartID, weeklyLowBar, weeklyLow, WeeklyColor, "WL:", ANCHOR_TOP, ShowWeekly, time);
+   DrawHighMarkerAndLabel("WH_"+chartID, weeklyHighBar, weeklyHigh, WeeklyColor, "WH:", ShowWeekly, time);
+   DrawLowMarkerAndLabel("WL_"+chartID, weeklyLowBar, weeklyLow, WeeklyColor, "WL:", ShowWeekly, time);
 
    // Monthly
-   DrawMarkerAndLabel("MH_"+chartID, monthlyHighBar, monthlyHigh, MonthlyColor, "MH:", ANCHOR_BOTTOM, ShowMonthly, time);
-   DrawMarkerAndLabel("ML_"+chartID, monthlyLowBar, monthlyLow, MonthlyColor, "ML:", ANCHOR_TOP, ShowMonthly, time);
+   DrawHighMarkerAndLabel("MH_"+chartID, monthlyHighBar, monthlyHigh, MonthlyColor, "MH:", ShowMonthly, time);
+   DrawLowMarkerAndLabel("ML_"+chartID, monthlyLowBar, monthlyLow, MonthlyColor, "ML:", ShowMonthly, time);
 
    // Yearly
-   DrawMarkerAndLabel("YH_"+chartID, yearlyHighBar, yearlyHigh, YearlyColor, "YH:", ANCHOR_BOTTOM, ShowYearly, time);
-   DrawMarkerAndLabel("YL_"+chartID, yearlyLowBar, yearlyLow, YearlyColor, "YL:", ANCHOR_TOP, ShowYearly, time);
+   DrawHighMarkerAndLabel("YH_"+chartID, yearlyHighBar, yearlyHigh, YearlyColor, "YH:", ShowYearly, time);
+   DrawLowMarkerAndLabel("YL_"+chartID, yearlyLowBar, yearlyLow, YearlyColor, "YL:", ShowYearly, time);
   }
 //+------------------------------------------------------------------+
 //| Indicator deinitialization function                              |
