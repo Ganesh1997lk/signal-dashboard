@@ -345,8 +345,9 @@ void DrawHighMarkerAndLabel(string name, int barIndex, double price, color clr, 
       ObjectCreate(0, name + "_label", OBJ_TEXT, 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
       ObjectSetInteger(0, name + "_label", OBJPROP_COLOR, clr);
-      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_LEFT_BOTTOM);
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_BOTTOM);
       ObjectSetInteger(0, name + "_label", OBJPROP_XDISTANCE, 10);
+      ObjectSetInteger(0, name + "_label", OBJPROP_YDISTANCE, 5); // Shift label down
      }
    else
      {
@@ -384,8 +385,9 @@ void DrawLowMarkerAndLabel(string name, int barIndex, double price, color clr, s
       ObjectCreate(0, name + "_label", OBJ_TEXT, 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
       ObjectSetInteger(0, name + "_label", OBJPROP_COLOR, clr);
-      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_LEFT_TOP);
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_TOP);
       ObjectSetInteger(0, name + "_label", OBJPROP_XDISTANCE, 10);
+      ObjectSetInteger(0, name + "_label", OBJPROP_YDISTANCE, -5); // Shift label up
      }
    else
      {
