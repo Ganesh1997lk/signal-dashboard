@@ -62,6 +62,14 @@ int currentMonth = -1;
 int lastDayOfWeek = 7;
 int currentYear = -1;
 
+//--- Forward declarations for helper functions
+void PerformInitialScan(const datetime &time[], const double &high[], const double &low[], int rates_total);
+void DrawLines(const datetime &time[], int rates_total);
+void DrawShortLine(string name, double price, color clr, bool show, const datetime &time[], int rates_total);
+void DrawAllMarkers(const datetime &time[]);
+void DrawHighMarkerAndLabel(string name, int barIndex, double price, color clr, string text, bool show, const datetime &time[]);
+void DrawLowMarkerAndLabel(string name, int barIndex, double price, color clr, string text, bool show, const datetime &time[]);
+
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
 //+------------------------------------------------------------------+
@@ -106,6 +114,8 @@ int OnCalculate(const int rates_total,
          currentDay = dt.day_of_year;
          dailyHigh = high[i];
          dailyLow = low[i];
+            dailyHighBar = i;
+            dailyLowBar = i;
          lastAlertedDailyHigh = high[i];
          lastAlertedDailyLow = low[i];
         }
@@ -115,6 +125,8 @@ int OnCalculate(const int rates_total,
         {
          weeklyHigh = high[i];
          weeklyLow = low[i];
+            weeklyHighBar = i;
+            weeklyLowBar = i;
          lastAlertedWeeklyHigh = high[i];
          lastAlertedWeeklyLow = low[i];
         }
@@ -125,6 +137,8 @@ int OnCalculate(const int rates_total,
          currentMonth = dt.mon;
          monthlyHigh = high[i];
          monthlyLow = low[i];
+            monthlyHighBar = i;
+            monthlyLowBar = i;
          lastAlertedMonthlyHigh = high[i];
          lastAlertedMonthlyLow = low[i];
         }
@@ -135,6 +149,8 @@ int OnCalculate(const int rates_total,
          currentYear = dt.year;
          yearlyHigh = high[i];
          yearlyLow = low[i];
+            yearlyHighBar = i;
+            yearlyLowBar = i;
          lastAlertedYearlyHigh = high[i];
          lastAlertedYearlyLow = low[i];
         }
@@ -222,6 +238,8 @@ void PerformInitialScan(const datetime &time[], const double &high[], const doub
          currentDay = dt.day_of_year;
          dailyHigh = high[i];
          dailyLow = low[i];
+         dailyHighBar = i;
+         dailyLowBar = i;
         }
 
       //--- Check for new week (when day of week resets, e.g., Sat -> Sun)
@@ -229,6 +247,8 @@ void PerformInitialScan(const datetime &time[], const double &high[], const doub
         {
          weeklyHigh = high[i];
          weeklyLow = low[i];
+         weeklyHighBar = i;
+         weeklyLowBar = i;
         }
 
       //--- Check for new month
@@ -237,6 +257,8 @@ void PerformInitialScan(const datetime &time[], const double &high[], const doub
          currentMonth = dt.mon;
          monthlyHigh = high[i];
          monthlyLow = low[i];
+         monthlyHighBar = i;
+         monthlyLowBar = i;
         }
 
       //--- Check for new year
@@ -245,6 +267,8 @@ void PerformInitialScan(const datetime &time[], const double &high[], const doub
          currentYear = dt.year;
          yearlyHigh = high[i];
          yearlyLow = low[i];
+         yearlyHighBar = i;
+         yearlyLowBar = i;
         }
 
       //--- Update Highs and Lows
@@ -345,14 +369,15 @@ void DrawHighMarkerAndLabel(string name, int barIndex, double price, color clr, 
       ObjectCreate(0, name + "_label", OBJ_TEXT, 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
       ObjectSetInteger(0, name + "_label", OBJPROP_COLOR, clr);
-      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_BOTTOM);
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_BOTTOM); // Correct anchor for text
       ObjectSetInteger(0, name + "_label", OBJPROP_XDISTANCE, 10);
-      ObjectSetInteger(0, name + "_label", OBJPROP_YDISTANCE, 5); // Shift label down
+      ObjectSetInteger(0, name + "_label", OBJPROP_YDISTANCE, 5); // Shift label up
      }
    else
      {
       ObjectMove(0, name + "_label", 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_BOTTOM);
      }
   }
 //+------------------------------------------------------------------+
@@ -385,14 +410,15 @@ void DrawLowMarkerAndLabel(string name, int barIndex, double price, color clr, s
       ObjectCreate(0, name + "_label", OBJ_TEXT, 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
       ObjectSetInteger(0, name + "_label", OBJPROP_COLOR, clr);
-      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_TOP);
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_TOP); // Correct anchor for text
       ObjectSetInteger(0, name + "_label", OBJPROP_XDISTANCE, 10);
-      ObjectSetInteger(0, name + "_label", OBJPROP_YDISTANCE, -5); // Shift label up
+      ObjectSetInteger(0, name + "_label", OBJPROP_YDISTANCE, -5); // Shift label down
      }
    else
      {
       ObjectMove(0, name + "_label", 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, ANCHOR_TOP);
      }
   }
 //+------------------------------------------------------------------+
