@@ -41,13 +41,13 @@ double yearlyHigh, yearlyLow;
 
 //--- Global variables to track alerted levels
 double lastAlertedDailyHigh    = 0;
-double lastAlertedDailyLow     = 1000000;
+double lastAlertedDailyLow     = DBL_MAX;
 double lastAlertedWeeklyHigh   = 0;
-double lastAlertedWeeklyLow    = 1000000;
+double lastAlertedWeeklyLow    = DBL_MAX;
 double lastAlertedMonthlyHigh  = 0;
-double lastAlertedMonthlyLow   = 1000000;
+double lastAlertedMonthlyLow   = DBL_MAX;
 double lastAlertedYearlyHigh   = 0;
-double lastAlertedYearlyLow    = 1000000;
+double lastAlertedYearlyLow    = DBL_MAX;
 
 //--- Global variables to track the bar index of highs/lows
 int dailyHighBar, dailyLowBar;
@@ -86,17 +86,21 @@ int OnCalculate(const int rates_total,
                 const long &volume[],
                 const int &spread[])
   {
-   //--- Determine the starting bar for calculation
-   int start = prev_calculated > 1 ? prev_calculated - 1 : 0;
-
-//--- Loop through each bar that needs calculation
-   for(int i = start; i < rates_total; i++)
+   //--- On the first run, perform a full historical scan. On subsequent runs, process only new bars.
+   if(prev_calculated == 0)
      {
-      //--- Get time details for the current bar
-      MqlDateTime dt;
-      TimeToStruct(time[i], dt);
+      PerformInitialScan(time, high, low, rates_total);
+     }
+   else
+     {
+      //--- Process only new bars
+      for(int i = prev_calculated - 1; i < rates_total; i++)
+        {
+         //--- Get time details for the current bar
+         MqlDateTime dt;
+         TimeToStruct(time[i], dt);
 
-      //--- Check for new day
+         //--- Check for new day
       if(dt.day_of_year != currentDay || dt.year != currentYear)
         {
          currentDay = dt.day_of_year;
@@ -166,6 +170,7 @@ int OnCalculate(const int rates_total,
 
       //--- Update the last day of the week for the next iteration
       lastDayOfWeek = dt.day_of_week;
+        }
      }
 //---
 
@@ -177,6 +182,87 @@ int OnCalculate(const int rates_total,
       DrawAllMarkers(time);
      }
    return(rates_total);
+  }
+//+------------------------------------------------------------------+
+//| Performs a one-time scan of recent history to find H/L           |
+//+------------------------------------------------------------------+
+void PerformInitialScan(const datetime &time[], const double &high[], const double &low[], int rates_total)
+  {
+   //--- Find the first bar of the current year
+   MqlDateTime current_dt;
+   TimeToStruct(time[rates_total - 1], current_dt);
+   int year_start_index = 0;
+   for(int i = rates_total - 1; i >= 0; i--)
+     {
+      MqlDateTime bar_dt;
+      TimeToStruct(time[i], bar_dt);
+      if(bar_dt.year < current_dt.year)
+        {
+         year_start_index = i + 1;
+         break;
+        }
+     }
+
+   //--- Initialize states before scanning
+   currentDay = -1;
+   currentMonth = -1;
+   currentYear = -1;
+   lastDayOfWeek = 7;
+
+   //--- Scan forward from the start of the year
+   for(int i = year_start_index; i < rates_total; i++)
+     {
+      //--- Get time details for the current bar
+      MqlDateTime dt;
+      TimeToStruct(time[i], dt);
+
+      //--- Check for new day
+      if(dt.day_of_year != currentDay || dt.year != currentYear)
+        {
+         currentDay = dt.day_of_year;
+         dailyHigh = high[i];
+         dailyLow = low[i];
+        }
+
+      //--- Check for new week (when day of week resets, e.g., Sat -> Sun)
+      if(dt.day_of_week < lastDayOfWeek || dt.year != currentYear)
+        {
+         weeklyHigh = high[i];
+         weeklyLow = low[i];
+        }
+
+      //--- Check for new month
+      if(dt.mon != currentMonth || dt.year != currentYear)
+        {
+         currentMonth = dt.mon;
+         monthlyHigh = high[i];
+         monthlyLow = low[i];
+        }
+
+      //--- Check for new year
+      if(dt.year != currentYear)
+        {
+         currentYear = dt.year;
+         yearlyHigh = high[i];
+         yearlyLow = low[i];
+        }
+
+      //--- Update Highs and Lows
+      if (high[i] > dailyHigh) { dailyHigh = high[i]; dailyHighBar = i; }
+      if (low[i] < dailyLow) { dailyLow = low[i]; dailyLowBar = i; }
+
+      if (high[i] > weeklyHigh) { weeklyHigh = high[i]; weeklyHighBar = i; }
+      if (low[i] < weeklyLow) { weeklyLow = low[i]; weeklyLowBar = i; }
+
+      if (high[i] > monthlyHigh) { monthlyHigh = high[i]; monthlyHighBar = i; }
+      if (low[i] < monthlyLow) { monthlyLow = low[i]; monthlyLowBar = i; }
+
+      if (high[i] > yearlyHigh) { yearlyHigh = high[i]; yearlyHighBar = i; }
+      if (low[i] < yearlyLow) { yearlyLow = low[i]; yearlyLowBar = i; }
+
+      //--- Update the last day of the week for the next iteration
+      lastDayOfWeek = dt.day_of_week;
+     }
   }
 //+------------------------------------------------------------------+
 //| Helper function to draw short trend lines ("cross style")        |
@@ -232,12 +318,15 @@ void DrawLines(const datetime &time[], int rates_total)
 //+------------------------------------------------------------------+
 void DrawMarkerAndLabel(string name, int barIndex, double price, color clr, string text, ENUM_ARROW_ANCHOR anchor, bool show, const datetime &time[])
   {
-   if(!show || barIndex <= 0)
+   if(!show || barIndex < 0)
      {
       ObjectDelete(0, name + "_marker");
       ObjectDelete(0, name + "_label");
       return;
      }
+
+   // Define the correct anchor point type for the text label based on the arrow anchor
+   ENUM_ANCHOR_POINT label_anchor = (anchor == ANCHOR_BOTTOM) ? ANCHOR_LEFT_BOTTOM : ANCHOR_LEFT_TOP;
 
    // Draw the cross marker
    if(ObjectFind(0, name + "_marker") < 0)
@@ -259,13 +348,14 @@ void DrawMarkerAndLabel(string name, int barIndex, double price, color clr, stri
       ObjectCreate(0, name + "_label", OBJ_TEXT, 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
       ObjectSetInteger(0, name + "_label", OBJPROP_COLOR, clr);
-      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, anchor);
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, label_anchor);
       ObjectSetInteger(0, name + "_label", OBJPROP_XDISTANCE, 10);
      }
    else
      {
       ObjectMove(0, name + "_label", 0, time[barIndex], price);
       ObjectSetString(0, name + "_label", OBJPROP_TEXT, text + " " + DoubleToString(price, _Digits));
+      ObjectSetInteger(0, name + "_label", OBJPROP_ANCHOR, label_anchor);
      }
   }
 //+------------------------------------------------------------------+
