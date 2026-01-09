@@ -1,0 +1,227 @@
+//@version=5
+indicator("SMC Concepts Indicator", shorttitle="SMC", overlay=true)
+
+// =====================================================================================
+// Section 1: Swing Point Detection
+// =====================================================================================
+
+// User Inputs for Swing Point Detection
+// Inputs are now grouped and organized for better user experience.
+// =====================================================================================
+//                                     INPUTS
+// =====================================================================================
+var g_settings = "--- SETTINGS ---"
+int i_swing_lookback_left = input.int(5, "Swing Lookback (Left)", inline="swing", group=g_settings)
+int i_swing_lookback_right = input.int(5, "Swing Lookback (Right)", inline="swing", group=g_settings)
+int i_ob_lookback = input.int(5, "Order Block Search Lookback", group=g_settings, tooltip="How many candles to look back from a swing point to find the origin order block.")
+int i_max_zones = input.int(50, "Max Number of Zones to Display", group=g_settings, tooltip="Limits the number of OBs and FVGs on the chart to maintain performance.")
+
+var g_visuals = "--- VISUALS ---"
+color i_bullish_ob_color = input.color(color.new(color.green, 75), "Bullish OB", group=g_visuals, inline="ob")
+color i_bearish_ob_color = input.color(color.new(color.red, 75), "Bearish OB", group=g_visuals, inline="ob")
+color i_bullish_fvg_color = input.color(color.new(color.blue, 75), "Bullish FVG", group=g_visuals, inline="fvg")
+color i_bearish_fvg_color = input.color(color.new(color.orange, 75), "Bearish FVG", group=g_visuals, inline="fvg")
+bool i_show_pivots = input.bool(true, "Show Pivot Points", group=g_visuals)
+
+// =====================================================================================
+// Section 1: Swing Point Detection
+// =====================================================================================
+float ph = ta.pivothigh(high, i_swing_lookback_left, i_swing_lookback_right)
+float pl = ta.pivotlow(low, i_swing_lookback_left, i_swing_lookback_right)
+
+// Plotting for verification, controlled by input
+// Use intermediate variables to resolve potential syntax issues with complex series in plot calls
+float plot_ph = i_show_pivots ? ph : na
+float plot_pl = i_show_pivots ? pl : na
+
+// Drastically simplified for debugging the syntax error.
+plot(plot_ph, title="Pivot High")
+plot(plot_pl, title="Pivot Low")
+
+// =====================================================================================
+// Section 2: Market Structure & Trend Identification
+// =====================================================================================
+
+// Persistent variables to store the last two pivot points and their bar indexes
+var float last_ph = na
+var float last_pl = na
+var int last_ph_bar = na
+var int last_pl_bar = na
+
+var float second_last_ph = na
+var float second_last_pl = na
+var int second_last_ph_bar = na
+var int second_last_pl_bar = na
+
+// Update pivot points when a new one is confirmed
+if not na(ph)
+    second_last_ph := last_ph
+    second_last_ph_bar := last_ph_bar
+    last_ph := ph
+    last_ph_bar := bar_index - i_swing_lookback_right
+if not na(pl)
+    second_last_pl := last_pl
+    second_last_pl_bar := last_pl_bar
+    last_pl := pl
+    last_pl_bar := bar_index - i_swing_lookback_right
+
+// Determine Market Structure
+bool is_higher_high = not na(last_ph) and not na(second_last_ph) and last_ph > second_last_ph
+bool is_higher_low = not na(last_pl) and not na(second_last_pl) and last_pl > second_last_pl
+bool is_lower_high = not na(last_ph) and not na(second_last_ph) and last_ph < second_last_ph
+bool is_lower_low = not na(last_pl) and not na(second_last_pl) and last_pl < second_last_pl
+
+// Determine Trend using a persistent state machine
+var string trend_state = "Sideways"
+
+// Trend State Logic
+if trend_state == "Sideways" or trend_state == "Downtrend"
+    if is_higher_high and is_higher_low
+        trend_state := "Uptrend" // Confirmed Uptrend
+
+if trend_state == "Sideways" or trend_state == "Uptrend"
+    if is_lower_high and is_lower_low
+        trend_state := "Downtrend" // Confirmed Downtrend
+
+// Change of Character (CHoCH) Logic
+if trend_state == "Uptrend"
+    if is_lower_low
+        trend_state := "Downtrend" // Bearish CHoCH
+
+if trend_state == "Downtrend"
+    if is_higher_high
+        trend_state := "Uptrend" // Bullish CHoCH
+
+
+// Set color based on the persistent trend state
+color trend_color = trend_state == "Uptrend" ? color.new(color.green, 75) :
+                  trend_state == "Downtrend" ? color.new(color.red, 75) :
+                  color.new(color.gray, 75)
+
+// Display Trend Status on Chart
+var label trend_label = label.new(
+     bar_index, high,
+     text="Calculating...",
+     xloc=xloc.bar_index, yloc=yloc.price,
+     color=color.new(color.black, 100), textcolor=color.white, style=label.style_label_right,
+     size=size.normal
+)
+
+if barstate.islast
+    label.set_xy(trend_label, bar_index + 5, ta.highest(high, 20))
+    label.set_text(trend_label, "Trend: " + trend_state)
+    label.set_color(trend_label, trend_color)
+    label.set_textcolor(trend_label, color.white)
+
+// =====================================================================================
+// Section 3: Order Block (OB) Detection
+// =====================================================================================
+
+// Define a custom type to store Order Block information
+type OrderBlock
+    float top_price
+    float bottom_price
+    int start_bar
+    bool is_bullish
+    bool mitigated
+    box ob_box
+
+// Create a persistent array to store the active OBs
+var array<OrderBlock> ob_array = array.new<OrderBlock>()
+
+// --- Bearish Order Block Logic ---
+if is_lower_low
+    int swing_high_bar = last_ph_bar
+    int ob_bar_index = swing_high_bar
+    for i = 0 to i_ob_lookback
+        if close[swing_high_bar - i] > open[swing_high_bar - i]
+            ob_bar_index := swing_high_bar - i
+            break
+    if ob_bar_index != swing_high_bar or (close[ob_bar_index] > open[ob_bar_index])
+        box new_box = box.new(ob_bar_index, high[ob_bar_index], bar_index + 20, low[ob_bar_index], border_color=na, bgcolor=i_bearish_ob_color)
+        OrderBlock new_ob = OrderBlock.new(high[ob_bar_index], low[ob_bar_index], ob_bar_index, false, false, new_box)
+        ob_array.push(new_ob)
+
+// --- Bullish Order Block Logic ---
+if is_higher_high
+    int swing_low_bar = last_pl_bar
+    int ob_bar_index = swing_low_bar
+    for i = 0 to i_ob_lookback
+        if close[swing_low_bar - i] < open[swing_low_bar - i]
+            ob_bar_index := swing_low_bar - i
+            break
+    if ob_bar_index != swing_low_bar or (close[ob_bar_index] < open[ob_bar_index])
+        box new_box = box.new(ob_bar_index, high[ob_bar_index], bar_index + 20, low[ob_bar_index], border_color=na, bgcolor=i_bullish_ob_color)
+        OrderBlock new_ob = OrderBlock.new(high[ob_bar_index], low[ob_bar_index], ob_bar_index, true, false, new_box)
+        ob_array.push(new_ob)
+
+// =====================================================================================
+// Section 4: Fair Value Gap (FVG) Detection
+// =====================================================================================
+
+// Define a custom type to store FVG information
+type FairValueGap
+    float top_price
+    float bottom_price
+    int start_bar
+    bool is_bullish
+    bool mitigated
+    box fvg_box
+
+var array<FairValueGap> fvg_array = array.new<FairValueGap>()
+
+// FVG Detection Logic
+// Bullish FVG
+if high[2] < low[0]
+    box new_box = box.new(bar_index - 1, low[0], bar_index + 20, high[2], border_color=na, bgcolor=i_bullish_fvg_color)
+    FairValueGap new_fvg = FairValueGap.new(low[0], high[2], bar_index - 1, true, false, new_box)
+    fvg_array.push(new_fvg)
+
+// Bearish FVG
+if low[2] > high[0]
+    box new_box = box.new(bar_index - 1, high[0], bar_index + 20, low[2], border_color=na, bgcolor=i_bearish_fvg_color)
+    FairValueGap new_fvg = FairValueGap.new(high[0], low[2], bar_index - 1, false, false, new_box)
+    fvg_array.push(new_fvg)
+
+// =====================================================================================
+// Section 5: Zone Mitigation & Drawing Management
+// =====================================================================================
+
+// On every bar, iterate through the arrays to manage zones
+if array.size(ob_array) > 0
+    for i = 0 to array.size(ob_array) - 1
+        ob = array.get(ob_array, i)
+
+        // 1. Check for Mitigation
+        if not ob.mitigated and high >= ob.bottom_price and low <= ob.top_price
+            ob.mitigated := true
+            box.set_bgcolor(ob.ob_box, ob.is_bullish ? color.new(color.green, 95) : color.new(color.red, 95))
+            box.set_border_style(ob.ob_box, line.style_dashed)
+            box.set_border_color(ob.ob_box, ob.is_bullish ? color.green : color.red)
+
+        // 2. Extend the box to the right
+        box.set_right(ob.ob_box, bar_index + 20)
+
+if array.size(fvg_array) > 0
+    for i = 0 to array.size(fvg_array) - 1
+        fvg = array.get(fvg_array, i)
+
+        // 1. Check for Mitigation
+        if not fvg.mitigated and high >= fvg.bottom_price and low <= fvg.top_price
+            fvg.mitigated := true
+            box.set_bgcolor(fvg.fvg_box, fvg.is_bullish ? color.new(color.blue, 95) : color.new(color.orange, 95))
+            box.set_border_style(fvg.fvg_box, line.style_dashed)
+            box.set_border_color(fvg.fvg_box, fvg.is_bullish ? color.blue : color.orange)
+
+        // 2. Extend the box to the right
+        box.set_right(fvg.fvg_box, bar_index + 20)
+
+// --- History Management ---
+// To prevent performance issues, remove the oldest zones if the array size exceeds the max limit
+if array.size(ob_array) > i_max_zones
+    OrderBlock oldest_ob = array.shift(ob_array)
+    box.delete(oldest_ob.ob_box)
+
+if array.size(fvg_array) > i_max_zones
+    FairValueGap oldest_fvg = array.shift(fvg_array)
+    box.delete(oldest_fvg.fvg_box)
